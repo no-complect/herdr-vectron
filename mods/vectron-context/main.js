@@ -17,7 +17,7 @@ import {
 } from "herdr";
 import { categories, categoryOf, ContextEvents, formatCount, reportedUsageAt } from "./model.js";
 import { Flash, flashColor } from "./beam.js";
-import { CompactionAfterimage, compactionComparison } from "./afterimage.js";
+import { CompactionAfterimage, afterimageLayer, compactionComparison } from "./afterimage.js";
 import { layoutVisibility } from "./visibility.js";
 import { focusedSession, providerNames } from "./target.js";
 
@@ -507,34 +507,43 @@ export default class ContextInspector extends View {
           ),
       )
       .child(
-        h_flex()
+        div()
           .id("context-category-bar")
+          .relative()
           .h(18)
           .w_full()
           .rounded(3)
           .overflow_hidden()
           .bg(t.surface)
-          .children(
-            active.map((c) =>
-              div()
-                .id(`bar-${c.id}`)
-                .h_full()
-                .w(`${(counts[c.id] / sum) * 100}%`)
-                .flex_none()
-                .relative()
-                .bg(c.color + "52")
-                .child(
-                  this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
-                )
-                .child(this.dataFlash.layer(c.id, "fill"))
-                .cursor_pointer()
-                .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
-                .on_click((_e, cx) => {
-                  this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
-                  cx.notify();
-                }),
+          .on_size_change(({ width }, cx) => {
+            if (this.categoryBarWidth === width) return;
+            this.categoryBarWidth = width;
+            if (this.afterimage.current) cx.notify();
+          })
+          .child(
+            h_flex().size_full().children(
+              active.map((c) =>
+                div()
+                  .id(`bar-${c.id}`)
+                  .h_full()
+                  .w(`${(counts[c.id] / sum) * 100}%`)
+                  .flex_none()
+                  .relative()
+                  .bg(c.color + "52")
+                  .child(
+                    this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
+                  )
+                  .child(this.dataFlash.layer(c.id, "fill"))
+                  .cursor_pointer()
+                  .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
+                  .on_click((_e, cx) => {
+                    this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
+                    cx.notify();
+                  }),
+              ),
             ),
-          ),
+          )
+          .when(Boolean(image), (el) => el.child(afterimageLayer(image, this.categoryBarWidth, t))),
       )
       .child(legend)
       .when(Boolean(this.selectedCategory), (el) =>

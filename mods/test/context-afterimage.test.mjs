@@ -29,17 +29,24 @@ test("only newer Codex or Claude compaction records with a smaller estimate prod
   assert.equal(compactionComparison(after, after, 800, 100), null);
 });
 
-test("the comparison expires once and old timers cannot clear a newer comparison", () => {
+test("afterimage stages finish once and timers cannot change a replacement or cleared image", () => {
   const image = new CompactionAfterimage();
   const timers = [];
   const cx = { notify() {}, timer: { after: (_ms, callback) => timers.push(callback) } };
   const flush = () => timers.splice(0).forEach((callback) => callback(cx));
 
   image.start(cx, { before: 800, after: 100 });
+  const first = image.current;
+  assert.equal(first.phase, "start");
   image.start(cx, { before: 900, after: 200 });
   const next = image.current;
-  timers.shift()(cx);
+  timers.splice(0, 4).forEach((callback) => callback(cx));
   assert.equal(image.current, next);
+  assert.equal(next.phase, "start");
+  for (const phase of ["shrink", "fade-outline", "fade-comparison"]) {
+    timers.shift()(cx);
+    assert.equal(image.current.phase, phase);
+  }
   timers.shift()(cx);
   assert.equal(image.current, null);
 
@@ -49,7 +56,7 @@ test("the comparison expires once and old timers cannot clear a newer comparison
   assert.equal(image.current, null);
 });
 
-test("the Context caption compares estimates only in the live Since compact view", async () => {
+test("the Context bar shows the comparison at its original height and keeps whole-history and replay static", async () => {
   const noop = () => {};
   const theme = { surface: "#081022", accent: "#f2f54a", ansi6: "#72dac0" };
   const { default: ContextInspector } = await loadMod("vectron-context", "main.js", {
@@ -68,17 +75,25 @@ test("the Context caption compares estimates only in the live Since compact view
   view.replayCutoff = null;
   view.width = 450;
   const totals = { counts: { user: 80, summary: 20 }, sum: 100 };
-  const showsComparison = () =>
-    Boolean(find(view.breakdown(totals), (node) => node.nodes.includes("~800 → ~100 tokens")));
-  assert.equal(showsComparison(), false);
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const initial = view.breakdown(totals);
+  byId(initial, "context-category-bar").calls.on_size_change[0]({ width: 280 }, cx);
+
   view.flashUpdatedCounts(cx, before, after);
-  assert.equal(showsComparison(), true);
+  const start = view.breakdown(totals);
+  assert.equal(byId(start, "context-category-bar").calls.h[0], 18);
+  assert.equal(byId(start, "context-afterimage-fill-1").calls.w[0], 280);
+  assert.ok(find(start, (node) => node.nodes.includes("~800 → ~100 tokens")));
+  timers.shift()(cx);
+  const shrink = view.breakdown(totals);
+  assert.equal(byId(shrink, "context-afterimage-fill-1").calls.w[0], 35);
+  assert.equal(byId(shrink, "context-afterimage-outline-1").calls.opacity[0], 0.92);
 
   view.replayCutoff = 90;
-  assert.equal(showsComparison(), false);
+  assert.equal(byId(view.breakdown(totals), "context-afterimage-fill-1"), undefined);
   view.replayCutoff = null;
   view.showWholeHistory = true;
-  assert.equal(showsComparison(), false);
+  assert.equal(byId(view.breakdown(totals), "context-afterimage-fill-1"), undefined);
   view.afterimage.clear();
   view.flashUpdatedCounts(cx, before, after);
   assert.equal(view.afterimage.current, null);
