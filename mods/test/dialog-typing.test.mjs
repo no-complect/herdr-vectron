@@ -5,6 +5,11 @@ import { find, loadMod } from "./support/herdr.mjs";
 
 const noop = () => {};
 const space = { id: "remote/s1", machine: "remote", name: "Previous name", named: true, active: true };
+const agents = [
+  { key: "codex", name: "Codex", installed: true, run: ["codex"], icon: "codex.svg" },
+  { key: "claude", name: "Claude Code", installed: true, run: ["claude"], icon: "claude.svg" },
+  { key: "grok", name: "Grok Build", installed: false, run: ["grok"], icon: "grok.svg" },
+];
 const theme = {
   accent: "#f5fb62", ansi4: "#3287fe", ansi5: "#e34fd8", ansi6: "#8ae0c8",
   foreground: "#f0f4ff", dim: "#8091a8", input: "#26364f", popover: "#081022",
@@ -19,6 +24,7 @@ async function fixture(options = {}, activeSpaces = [space]) {
   const calls = [];
   const dialogs = [];
   const tasks = [];
+  const shared = new Map([["new-menu.agents", { remote: agents }]]);
   const cx = {
     notify: noop,
     stop_propagation: noop,
@@ -33,10 +39,18 @@ async function fixture(options = {}, activeSpaces = [space]) {
       spaces: () => activeSpaces,
       panes: () => [],
       theme: () => theme,
+      knownAgents: async ({ on }) => {
+        calls.push(["knownAgents", on]);
+        return agents;
+      },
       openOverlay: (spec) => dialogs.push(spec),
       closeOverlay: (id) => calls.push(["close", id]),
       run: (command, args) => calls.push([command, args]),
+      shared: (key) => shared.get(key),
+      setShared: (key, data) => shared.set(key, data),
       exec: async () => ({ code: 1 }),
+      keys: () => [],
+      window: () => ({ platform: "macos" }),
     },
     "gpui-base": {
       InputState: {
@@ -110,6 +124,44 @@ test("space menu Rename opens the flashing prompt for the clicked space and Esca
   assert.deepEqual(prompt.calls, [["close", "dialog-1"]]);
 });
 
+test("the tab launcher flashes on typing, filters by agent name, and starts one agent in the original space", async () => {
+  const activeSpaces = [space];
+  const f = await fixture({ part: "agent-launcher" }, activeSpaces);
+  assert.deepEqual(f.calls, [["knownAgents", "remote"]]);
+  assert.ok(byId(f.view.render(), "launch-codex"));
+  assert.ok(byId(f.view.render(), "launch-claude"));
+  const key = (key) => byId(f.view.render(), "agent-launcher").calls.on_key_down[0]({ key }, f.cx);
+  f.type("CLAUDE");
+  assert.ok(flash(f.view.render(), 1));
+  assert.equal(byId(f.view.render(), "launch-codex"), undefined);
+  assert.ok(byId(f.view.render(), "launch-claude"));
+  assert.ok(byId(f.view.render(), "launch-terminal"));
+  assert.ok(byId(f.view.render(), "launch-new-space"));
+  key("1");
+  assert.equal(f.calls.length, 1);
+
+  activeSpaces[0] = { ...space, id: "other/s1", machine: "other" };
+  f.submit();
+  assert.equal(f.calls[1][0], "close");
+  assert.equal(f.calls[2][0], "tab.new");
+  assert.equal(f.calls[2][1].name, "Claude Code");
+  assert.equal(f.calls[2][1].space, space.id);
+  assert.equal(f.calls[2][1].argv[0], "claude");
+});
+
+test("agent launcher keeps unfiltered number shortcuts and never starts an uninstalled agent", async () => {
+  const filtered = await fixture({ part: "agent-launcher" });
+  filtered.type("Grok");
+  byId(filtered.view.render(), "launch-grok").calls.on_click[0]({}, filtered.cx);
+  filtered.submit();
+  assert.deepEqual(filtered.calls, [["knownAgents", "remote"]]);
+
+  const unfiltered = await fixture({ part: "agent-launcher" });
+  byId(unfiltered.view.render(), "agent-launcher").calls.on_key_down[0]({ key: "2" }, unfiltered.cx);
+  assert.equal(unfiltered.calls[2][0], "tab.new");
+  assert.equal(unfiltered.calls[2][1].argv[0], "claude");
+});
+
 test("the Vectron rename shortcut and Whistle route into the flashing prompt", async () => {
   const root = new URL("../../", import.meta.url);
   const json = async (name) => JSON.parse(await readFile(new URL(name, root), "utf8"));
@@ -118,7 +170,7 @@ test("the Vectron rename shortcut and Whistle route into the flashing prompt", a
   assert.deepEqual(whistle.map.S.map.r, ["Rename space", "mod.open:vectron-dialogs"]);
 });
 
-test("both palettes and the Spaces menu use Vectron's rename prompt", async () => {
+test("both palettes, the Spaces menu, and the tab plus button use Vectron's dialogs", async () => {
   const calls = [];
   const dialogs = [];
   const herdr = {
@@ -132,9 +184,9 @@ test("both palettes and the Spaces menu use Vectron's rename prompt", async () =
   };
   const globals = { localStorage: { getItem: () => null, setItem: noop } };
   const load = (name) => loadMod(name, "main.js", { herdr }, globals);
-  const [commandPalette, dialogPalette, spaces] = await Promise.all([
+  const [commandPalette, dialogPalette, spaces, tabs] = await Promise.all([
     load("vectron-command-palette"), load("vectron-dialog-palette"),
-    load("vectron-spaces"),
+    load("vectron-spaces"), load("vectron-tabs"),
   ]);
 
   for (const { default: Palette } of [commandPalette, dialogPalette]) {
@@ -150,4 +202,11 @@ test("both palettes and the Spaces menu use Vectron's rename prompt", async () =
   assert.equal(dialogs[0].mod, "vectron-dialogs");
   assert.equal(dialogs[0].props.part, "space-menu");
   assert.equal(dialogs[0].props.id, space.id);
+
+  const strip = new tabs.default();
+  const cx = { spawn: noop, timer: { every: noop } };
+  strip.init({}, cx);
+  byId(strip.render(cx), "tab-new").calls.on_click[0]();
+  assert.equal(dialogs[1].mod, "vectron-dialogs");
+  assert.equal(dialogs[1].props.part, "agent-launcher");
 });

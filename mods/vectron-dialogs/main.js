@@ -1,15 +1,22 @@
 import { View } from "gpui-kit";
 import { props } from "herdr";
+import { AgentLauncher } from "./agent-launcher.js";
 import { SpaceMenu } from "./space-menu.js";
 import { SpaceName } from "./space-name.js";
 
 export default class Dialogs extends View {
   init(_props, cx) {
     const options = props() ?? {};
-    this.page =
-      options.part === "space-menu"
-        ? new SpaceMenu(options.id, cx)
-        : new SpaceName(options.id, cx);
+    switch (options.part) {
+      case "agent-launcher":
+        this.page = new AgentLauncher(cx);
+        break;
+      case "space-menu":
+        this.page = new SpaceMenu(options.id, cx);
+        break;
+      default:
+        this.page = new SpaceName(options.id, cx);
+    }
   }
 
   render() {

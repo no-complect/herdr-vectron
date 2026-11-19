@@ -559,7 +559,15 @@ export default class Tabs extends View {
           .text_color(t.dim)
           .hover((s) => s.bg(hov).text_color(t.foreground))
           .on_mouse_down("left", stop)
-          .on_click(() => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 }))
+          .on_click(() =>
+            openOverlay({
+              mod: "vectron-dialogs",
+              kind: "popup",
+              width: 250,
+              height: 530,
+              props: { part: "agent-launcher" },
+            }),
+          )
           .child(svg("mods/vectron-icons/plus.svg").size(14)),
       )
       .child(div().flex_1())
