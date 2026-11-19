@@ -24,13 +24,16 @@ async function agentsPanel({ overlay = false, storage = {} } = {}) {
     agent("active", "working", 3, { pinned: true }),
   ];
   const child = { address: "child", parent: "parent", state: "live", status: "error", program };
-  const state = { width: 268, sort: "priority", shown: "child" };
+  const state = { width: 268, sort: "priority", shown: "child", descendants: [child] };
   const calls = [];
   const persisted = new Map(Object.entries(storage));
   const palette = new Proxy({}, { get: () => "#c1cede" });
   const herdr = {
     agents: () => list,
-    terminals: () => [...list.map((agent) => ({ ...agent, state: "live" })), child],
+    terminals: () => [
+      ...list.map((agent) => ({ ...agent, state: "live" })),
+      ...state.descendants,
+    ],
     panes: () => {
       calls.push(["panes"]);
       return list.map((agent) => ({ ...agent, terminal: agent.address }));
@@ -160,4 +163,42 @@ test("the Agents sort popup leaves commands and the timer with the panel", async
   const tree = popup.render();
   assert.ok(elementWithId(tree, "sort-grouped"));
   assert.deepEqual(popup.calls, []);
+});
+
+test("deep sub-agents still affect priority in the collapsed rail", async () => {
+  const panel = await agentsPanel();
+  panel.state.width = 76;
+  const depth = 3000;
+  panel.state.descendants = Array.from({ length: depth }, (_, i) => ({
+    address: `child-${i}`,
+    parent: i === 0 ? "parent" : `child-${i - 1}`,
+    state: "live",
+    status: i === depth - 1 ? "error" : "idle",
+  }));
+
+  const tree = panel.render();
+  assert.equal(elementWithId(tree, "sub-child-0"), undefined);
+  assert.deepEqual(
+    panel.calls.find(([name]) => name === "order"),
+    ["order", ["active", "parent", "finished"]],
+  );
+});
+
+test("expanded sub-agent rows keep depth-first order and branch connectors", async () => {
+  const panel = await agentsPanel();
+  panel.state.descendants.push(
+    { address: "sibling", parent: "parent", state: "live", status: "idle" },
+    { address: "grandchild", parent: "child", state: "live", status: "idle" },
+  );
+
+  const rows = elementWithId(panel.render(), "ag-list").nodes;
+  const childRows = rows.filter((row) => row.calls.id?.[0]?.startsWith("sub-"));
+  assert.deepEqual(
+    childRows.map((row) => row.calls.id[0]),
+    ["sub-child", "sub-grandchild", "sub-sibling"],
+  );
+  const connectors = childRows[1].nodes.filter((node) => node.calls.border_l);
+  assert.equal(connectors.length, 2);
+  assert.equal(connectors[0].calls.border_b, undefined);
+  assert.ok(connectors[1].calls.border_b);
 });

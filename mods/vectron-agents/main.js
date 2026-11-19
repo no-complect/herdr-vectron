@@ -250,6 +250,7 @@ export default class Agents extends View {
     const byPriority = sort.id === "priority";
     const ordered = buildAgentList(list, all, {
       byPriority,
+      collapsed,
       listed,
       held: this.held,
       changed: this.changed,
@@ -264,7 +265,6 @@ export default class Agents extends View {
       t,
       ordered,
       {
-        all,
         byPriority,
         changed: this.changed,
         collapsed,
@@ -273,7 +273,6 @@ export default class Agents extends View {
         hovered: this.hovered,
         inputGlow: this.inputGlow,
         labels,
-        listed,
         now,
         selectedCursor: this.keyOn ? this.cursor : null,
         shown,

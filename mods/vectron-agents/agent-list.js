@@ -1,10 +1,11 @@
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // A sub-agent without a pane isn't in agents(): its raw word, error counting as
 // blocked. It's never done: it reports to its parent, and the parent's done is the news.
-export const kidStatus = (k, listed) => {
-  const s = listed.get(k.address) ?? k.status;
-  return s === "error" ? "blocked" : s === "done" ? "idle" : s;
-};
+function childStatus(terminal, listed) {
+  const status = listed.get(terminal.address) ?? terminal.status;
+  if (status === "error") return "blocked";
+  return status === "done" ? "idle" : status;
+}
 
 const SECTION = { 4: "blocked", 3: "done", 2: "working", 1: "idle" };
 const SECTION_STATUS = { 4: "blocked", 3: "done", 2: "working" };
@@ -74,16 +75,57 @@ export function buildAgentLabels(list, allPanes, allSpaces) {
   return { labels, detail };
 }
 
-// Live descendants in depth-first order, including their tree connectors.
-export function agentTree(all, addr, lead = []) {
-  const kids = all.filter((k) => k.parent === addr && k.state === "live");
-  return kids.flatMap((k, i) => {
-    const last = i === kids.length - 1;
-    return [
-      { t: k, lines: [...lead, last ? "└" : "├"] },
-      ...agentTree(all, k.address, [...lead, last ? "" : "│"]),
-    ];
-  });
+function indexLiveChildren(terminals) {
+  const childrenByParent = new Map();
+  for (const terminal of terminals) {
+    if (terminal.state !== "live" || !terminal.parent) continue;
+
+    if (!childrenByParent.has(terminal.parent)) childrenByParent.set(terminal.parent, []);
+    childrenByParent.get(terminal.parent).push(terminal);
+  }
+  return childrenByParent;
+}
+
+function collectDescendants(address, childrenByParent, listed, includeRows) {
+  const rows = [];
+  const rootChildren = childrenByParent.get(address);
+  if (!rootChildren) return { rank: 0, rows };
+
+  const stack = [{ children: rootChildren, index: 0, parentRow: null }];
+  const visited = new Set([address]);
+  let rank = 0;
+
+  while (stack.length) {
+    const frame = stack.at(-1);
+    if (frame.index === frame.children.length) {
+      stack.pop();
+      continue;
+    }
+
+    const terminal = frame.children[frame.index++];
+    if (visited.has(terminal.address)) continue;
+    visited.add(terminal.address);
+
+    const status = childStatus(terminal, listed);
+    rank = Math.max(rank, RANK[status] ?? 0);
+
+    let row = null;
+    if (includeRows) {
+      // Linking rows avoids copying an entire indentation path for each descendant.
+      row = {
+        terminal,
+        status,
+        parent: frame.parentRow,
+        last: frame.index === frame.children.length,
+      };
+      rows.push(row);
+    }
+
+    const children = childrenByParent.get(terminal.address);
+    if (children) stack.push({ children, index: 0, parentRow: row });
+  }
+
+  return { rank, rows };
 }
 
 function agentRank(agent, held) {
@@ -92,17 +134,27 @@ function agentRank(agent, held) {
   return viewedDone ? RANK.done : (RANK[agent.status] ?? 0);
 }
 
-export function buildAgentList(list, all, { byPriority, listed, held, changed }) {
+export function buildAgentList(
+  list,
+  terminals,
+  { byPriority, collapsed, listed, held, changed },
+) {
+  const childrenByParent = indexLiveChildren(terminals);
+  const descendants = new Map();
+  const urgency = new Map();
   const lastChanged = (agent) => changed[agent.address]?.at ?? 0;
-  const urgency = new Map(
-    list.map((a) => [
-      a.address,
-      Math.max(
-        agentRank(a, held),
-        ...agentTree(all, a.address).map((s) => RANK[kidStatus(s.t, listed)] ?? 0),
-      ),
-    ]),
-  );
+
+  for (const agent of list) {
+    const { rank, rows } = collectDescendants(
+      agent.address,
+      childrenByParent,
+      listed,
+      !collapsed,
+    );
+    urgency.set(agent.address, Math.max(agentRank(agent, held), rank));
+    descendants.set(agent.address, rows);
+  }
+
   const rankOf = (a) => urgency.get(a.address);
   if (byPriority)
     list = [...list].sort(
@@ -129,5 +181,5 @@ export function buildAgentList(list, all, { byPriority, listed, held, changed })
       });
   }
 
-  return { list: [...pinned, ...rest], groups };
+  return { list: [...pinned, ...rest], groups, descendants };
 }

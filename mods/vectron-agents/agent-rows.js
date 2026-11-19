@@ -1,6 +1,6 @@
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agentTree, kidStatus, RANK } from "./agent-list.js";
+import { RANK } from "./agent-list.js";
 import { programIcon } from "./program-icon.js";
 
 export const keynavOutline = (theme) => theme.foreground + "b3";
@@ -67,13 +67,18 @@ function statusBadge(t, a, compact = false) {
     .bg(a.status === "done" ? color : t.dim + "00");
 }
 
-function childRow(t, s, shown, compact, listed, actions) {
-  const k = s.t;
-  const st = kidStatus(k, listed);
-  const pic = programIcon(k.program, 14, t.foreground);
-  const on = k.address === shown;
+function childRow(t, row, shown, compact, actions) {
+  const { terminal: child, status } = row;
+  const connectors = [row.last ? "└" : "├"];
+  for (let ancestor = row.parent; ancestor; ancestor = ancestor.parent) {
+    connectors.push(ancestor.last ? "" : "│");
+  }
+  connectors.reverse();
+
+  const pic = programIcon(child.program, 14, t.foreground);
+  const on = child.address === shown;
   return h_flex()
-    .id(`sub-${k.address}`)
+    .id(`sub-${child.address}`)
     .pl(39)
     .pr(8)
     .rounded(0)
@@ -84,9 +89,9 @@ function childRow(t, s, shown, compact, listed, actions) {
     .text_size(12.5)
     .when(on, (el) => el.bg(t.foreground + "2e"))
     .hover((s) => s.bg(t.foreground + "14"))
-    .on_click(() => actions.peekTerminal(k.address))
+    .on_click(() => actions.peekTerminal(child.address))
     .children(
-      s.lines.map((l) =>
+      connectors.map((connector) =>
         div()
           .self_start()
           .mt(-4)
@@ -94,8 +99,8 @@ function childRow(t, s, shown, compact, listed, actions) {
           .h(17)
           .mr(4)
           .flex_none()
-          .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
-          .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(0)),
+          .when(Boolean(connector), (el) => el.border_l(1.5).border_color(t.input))
+          .when(connector === "└" || connector === "├", (el) => el.border_b(1.5).rounded_bl(0)),
       ),
     )
     .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
@@ -104,14 +109,14 @@ function childRow(t, s, shown, compact, listed, actions) {
         .flex_1()
         .truncate()
         .text_color(on ? t.foreground : t.muted)
-        .child(k.name || k.template || k.program?.name || k.address),
+        .child(child.name || child.template || child.program?.name || child.address),
     )
-    .child(statusBadge(t, { status: st }, compact));
+    .child(statusBadge(t, { status }, compact));
 }
 
 // The fold chevron; folded, the count too, colored by the most urgent one.
-function foldButton(t, a, subs, { listed, folded }, actions) {
-  const sts = subs.map((s) => kidStatus(s.t, listed));
+function foldButton(t, a, subs, { folded }, actions) {
+  const sts = subs.map(({ status }) => status);
   const top = sts.reduce((m, s) => ((RANK[s] ?? 0) > (RANK[m] ?? 0) ? s : m), null);
   const open = !folded.has(a.address);
   return div()
@@ -361,17 +366,14 @@ function groupHeader(t, g, { folded, byPriority }, actions) {
     );
 }
 
-export function renderAgentRows(t, { list, groups }, frame, actions) {
-  const { all, collapsed, folded, listed, shown, byPriority } = frame;
+export function renderAgentRows(t, { list, groups, descendants }, frame, actions) {
+  const { collapsed, folded, shown, byPriority } = frame;
   const withChildren = (agent, index) => {
-    const descendants = collapsed ? [] : agentTree(all, agent.address);
-    const row = agentRow(t, agent, index, descendants, frame, actions);
+    const children = descendants.get(agent.address);
+    const row = agentRow(t, agent, index, children, frame, actions);
     if (folded.has(agent.address)) return [row];
 
-    return [
-      row,
-      ...descendants.map((child) => childRow(t, child, shown, byPriority, listed, actions)),
-    ];
+    return [row, ...children.map((child) => childRow(t, child, shown, byPriority, actions))];
   };
 
   return collapsed
