@@ -133,12 +133,15 @@ test("a failed mod update restores the previous package", async () => {
     ["/cache/mods/first", "new first"],
     ["/cache/mods/second", "new second"],
   ]);
+  let replacementFailed = false;
   const io = {
     exec: async (command, args) => {
       const [from, to] = args.slice(-2);
       if (command === "test") return { code: Number(!files.has(args[1])) };
-      if (command === "mv" && from.endsWith("/incoming/mods/second")) {
+      const replacesSecondMod = (command === "cp" || command === "mv") && to === "/app/mods/second";
+      if (!replacementFailed && replacesSecondMod) {
         assert.equal(files.get("/app/mods/first"), "new first");
+        replacementFailed = true;
         return { code: 1, stderr: "fixture activation failure" };
       }
       if (command === "cp" || command === "mv") {

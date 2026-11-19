@@ -195,9 +195,25 @@ function tasks() {
   };
 }
 
+const contextHost = {
+  appHome: () => "/fixture",
+  props: () => ({}),
+  layout: noop,
+  panes: noop,
+  focused: noop,
+  terminals: noop,
+  theme: () => colorTheme,
+  settings: () => ({}),
+  shared: noop,
+  openOverlay: noop,
+  closeOverlay: noop,
+  exec: noop,
+};
+
 test("Context rejects late reads across agent and session switches and skips hidden refreshes", async () => {
   const requests = [];
   const herdr = {
+    ...contextHost,
     exec: (_program, args) =>
       new Promise((resolve) =>
         requests.push({
@@ -205,17 +221,6 @@ test("Context rejects late reads across agent and session switches and skips hid
           resolve: (data) => resolve({ code: 0, stdout: JSON.stringify(data) }),
         }),
       ),
-    appHome: () => "/fixture",
-    props: () => ({}),
-    layout: noop,
-    panes: noop,
-    focused: noop,
-    terminals: noop,
-    theme: noop,
-    settings: noop,
-    shared: noop,
-    openOverlay: noop,
-    closeOverlay: noop,
   };
   const { default: Inspector } = await loadMod("vectron-context", "main.js", {
     herdr,
@@ -263,7 +268,7 @@ test("Context rejects late reads across agent and session switches and skips hid
   selected = { ...selected, session_id: "first-thread", pid: 123 };
   view.refresh(timeline.context);
   view.replayCutoff = 12;
-  selected = { ...selected, session_id: "second-thread", pid: 456 };
+  selected = { ...selected, session_id: "second-thread" };
   const nextSession = tasks();
   view.refresh(nextSession.context);
   assert.equal(requests.length, 7);
@@ -281,22 +286,94 @@ test("Context rejects late reads across agent and session switches and skips hid
   assert.equal(requests.length, 7);
 });
 
-test("Context meters retain their native pulse rates and flash only changed categories", async () => {
+test("Context keeps the selected transcript and replay when a known session restarts", async () => {
+  const candidate = { path: "/fixture/chosen.jsonl", name: "Chosen session", updated: 0 };
+  const requests = [];
+  let pid = 123;
+  let sessionId = "same-thread";
   const { default: Inspector } = await loadMod("vectron-context", "main.js", {
     herdr: {
-      theme: () => colorTheme,
-      appHome: noop,
-      exec: noop,
-      focused: noop,
-      panes: noop,
-      terminals: noop,
-      layout: noop,
-      props: noop,
-      settings: noop,
-      shared: noop,
-      openOverlay: noop,
-      closeOverlay: noop,
+      ...contextHost,
+      focused: () => ({ space: "space", tab: "tab", pane: "pane", terminal: "t1" }),
+      panes: () => [{ pane: "pane", tab: "tab", terminal: "t1", program: { key: "codex" } }],
+      terminals: () => [
+        {
+          address: "t1",
+          app: "codex",
+          foreground: { pid, cwd: "/fixture" },
+          labels: { "agent.session": sessionId },
+        },
+      ],
+      exec: async (_program, args) => {
+        const request = JSON.parse(args[2]);
+        requests.push(request);
+        return {
+          code: 0,
+          stdout: JSON.stringify({
+            path: request.path ?? "/fixture/current.jsonl",
+            candidates: [candidate],
+          }),
+        };
+      },
     },
+  });
+  const view = new Inspector();
+  const { context, flush } = tasks();
+  view.init({}, context);
+  await flush();
+
+  const choice = find(view.pickerView(context), (node) => node.calls.id?.[0] === "session-0");
+  choice.calls.on_click[0]({}, context);
+  await flush();
+  assert.equal(view.data.path, candidate.path);
+  view.replayCutoff = 77;
+
+  pid = 456;
+  view.refresh(context);
+  pid = 789;
+  await flush();
+  assert.equal(requests.at(-1).path, candidate.path);
+  assert.equal(view.data.path, candidate.path);
+  assert.equal(view.replayCutoff, 77);
+
+  sessionId = undefined;
+  view.refresh(context);
+  await flush();
+  view.replayCutoff = 77;
+
+  pid = 999;
+  view.refresh(context);
+  await flush();
+  assert.equal(requests.at(-1).pid, 999);
+  assert.equal(view.replayCutoff, null);
+});
+
+test("Context previews show byte offsets and legacy line numbers", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: contextHost,
+  });
+  const view = new Inspector();
+  view.controlsFlash = { layer: () => null };
+  const source = "/fixture/session.jsonl";
+  const event = { id: "event", category: "user", label: "Prompt", tokens: 3, bytes: 12, source };
+  view.pinned = event.id;
+
+  for (const [position, suffix] of [
+    [{ offset: 0 }, " · byte 0"],
+    [{ offset: 144, line: 7 }, " · byte 144"],
+    [{ line: 7 }, ":7"],
+    [{}, ""],
+  ]) {
+    view.data = { events: [{ ...event, ...position }] };
+    const location = find(view.preview({}), (node) => node.calls.tooltip?.[0]?.startsWith(source));
+    assert.deepEqual(location.nodes, [`session.jsonl${suffix}`]);
+    assert.equal(location.calls.tooltip[0], `${source}${suffix}`);
+  }
+});
+
+test("Context meters retain their native pulse rates and flash only changed categories", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: contextHost,
   });
   const view = new Inspector();
   const updates = [];

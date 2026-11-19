@@ -25,8 +25,11 @@ const MOD = "vectron-context";
 // selected session without persisting an attachment or any conversation text.
 let panelInstance = null;
 
-const sessionKey = (target) =>
-  JSON.stringify([target?.address, target?.provider, target?.session_id, target?.pid]);
+function sessionKey(target) {
+  const { address, provider, session_id: sessionId, pid } = target ?? {};
+  // A process can restart and resume the same recorded session.
+  return JSON.stringify([address, provider, sessionId || null, sessionId ? null : pid]);
+}
 
 async function readSession(request, timeout = 15000) {
   const result = await exec(
@@ -679,6 +682,10 @@ export default class ContextInspector extends View {
       ? undefined
       : this.data?.events?.find((event) => event.id === this.pinned);
 
+    let sourcePosition = "";
+    if (event?.offset != null) sourcePosition = ` · byte ${event.offset}`;
+    else if (event?.line != null) sourcePosition = `:${event.line}`;
+
     return v_flex()
       .flex_1()
       .min_w(0)
@@ -736,8 +743,8 @@ export default class ContextInspector extends View {
               .text_size(10)
               .text_color(t.dim)
               .truncate()
-              .tooltip(`${event.source}:${event.line}`)
-              .child(`${event.source.split("/").pop()}:${event.line}`),
+              .tooltip(`${event.source}${sourcePosition}`)
+              .child(`${event.source.split("/").pop()}${sourcePosition}`),
           )
           .child(
             this.button("context-replay-event", "Replay through this event", () => {
