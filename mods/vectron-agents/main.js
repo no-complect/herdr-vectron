@@ -308,24 +308,39 @@ export default class Agents extends View {
                 .child(`AGENTS [${count}]`),
             )
             .child(
-              div()
-                .id("ag-sort")
-                .text_size(11)
-                .p(3)
-                .rounded(0)
-                .text_color(t.dim)
-                .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
-                .on_click(() =>
-                  openOverlay({
-                    mod: "vectron-agents",
-                    kind: "popup",
-                    width: 200,
-                    height: 140,
-                    props: { sortMenu: true },
-                  }),
+              h_flex()
+                .gap(4)
+                .child(
+                  div()
+                    .id("ag-map")
+                    .p(3)
+                    .text_color(t.dim)
+                    .cursor_pointer()
+                    .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
+                    .on_click(() => run("mod.open", { name: "vectron-agent-map" }))
+                    .tooltip("Agent map")
+                    .child(svg("mods/vectron-icons/git-branch.svg").size(14)),
                 )
-                .tooltip(`Sort agents: ${sort.label}`)
-                .child(svg(`mods/vectron-icons/${sort.icon}.svg`).size(14)),
+                .child(
+                  div()
+                    .id("ag-sort")
+                    .text_size(11)
+                    .p(3)
+                    .rounded(0)
+                    .text_color(t.dim)
+                    .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
+                    .on_click(() =>
+                      openOverlay({
+                        mod: "vectron-agents",
+                        kind: "popup",
+                        width: 200,
+                        height: 140,
+                        props: { sortMenu: true },
+                      }),
+                    )
+                    .tooltip(`Sort agents: ${sort.label}`)
+                    .child(svg(`mods/vectron-icons/${sort.icon}.svg`).size(14)),
+                ),
             ),
         ),
       )
