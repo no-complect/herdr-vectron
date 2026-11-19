@@ -18,6 +18,8 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 
 ## Controls
 
+In Context’s live **Since compact** view, a recorded compaction briefly shows the captured-text estimates before and after when the estimate drops.
+
 | Control | Action |
 | --- | --- |
 | ⌘P | Find a tab, space, or agent |
