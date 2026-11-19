@@ -4,7 +4,25 @@ import { InputGlow } from "./input-glow.js";
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout, home, nextCommand } from "herdr";
+import {
+  agents,
+  terminals,
+  panes,
+  focused,
+  spaces,
+  run,
+  theme,
+  shared,
+  setShared,
+  setAgentOrder,
+  openOverlay,
+  closeOverlay,
+  props,
+  window,
+  layout,
+  home,
+  nextCommand,
+} from "herdr";
 import { announce, isActive, entered, move, toTerminal } from "./keynav.js";
 import { programIcon } from "./program-icon.js";
 
@@ -13,7 +31,8 @@ import { programIcon } from "./program-icon.js";
 const MOD = "vectron-agents";
 // How this mod shows its keynav field: the field glows, its cursor item gets an outline.
 const glow = (t) => t.foreground + "b3";
-const frame = (t) => div().absolute().top(0).left(0).right(0).bottom(0).border_2().border_color(glow(t));
+const frame = (t) =>
+  div().absolute().top(0).left(0).right(0).bottom(0).border_2().border_color(glow(t));
 // One step through a list of ids, stopping at the ends.
 function step(ids, cur, d) {
   if (!ids.length) return null;
@@ -40,7 +59,10 @@ function toggleSidebar() {
   if (!narrow()) setShared("sidebar.width", width);
   // Mods edited before the rail went by width still read the flag.
   setShared("sidebar.collapsed", !narrow());
-  run("layout.resize", { id: "sidebar", px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44 });
+  run("layout.resize", {
+    id: "sidebar",
+    px: narrow() ? (shared("sidebar.width") ?? 268) : window()?.platform === "macos" ? 76 : 44,
+  });
 }
 
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -51,7 +73,11 @@ function leadPanes(all) {
     if (!p.terminal) continue;
     const current = leads.get(p.tab);
     // First agent, else first focused terminal, else first terminal in the tab.
-    if (!current || (!current.program?.agent && (p.program?.agent || (!current.focused && p.focused)))) leads.set(p.tab, p);
+    if (
+      !current ||
+      (!current.program?.agent && (p.program?.agent || (!current.focused && p.focused)))
+    )
+      leads.set(p.tab, p);
   }
   return leads;
 }
@@ -59,7 +85,12 @@ function leadPanes(all) {
 function title(tab, l) {
   const prog = l?.program?.name;
   const live = clean(l?.title);
-  const telling = live && live !== prog && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
+  const telling =
+    live &&
+    live !== prog &&
+    !/^[~/]|^[A-Za-z]:\\/.test(live) &&
+    !live.includes("@") &&
+    live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
 const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
@@ -89,7 +120,13 @@ export default class Agents extends View {
   init(_props, cx) {
     this.inputGlow = new InputGlow();
     // Only the list in the layout takes part, not this mod's sort menu (an overlay copy).
-    if (!props()?.overlay) cx.spawn(async (cx) => { for (;;) { this.handleCommand(await nextCommand()); cx.notify(); } });
+    if (!props()?.overlay)
+      cx.spawn(async (cx) => {
+        for (;;) {
+          this.handleCommand(await nextCommand());
+          cx.notify();
+        }
+      });
     if (props()?.sortMenu) return;
     this.folded = new Set();
     // Each agent's last state and when it changed (ms), kept across restarts.
@@ -113,7 +150,8 @@ export default class Agents extends View {
     if (!dirty) return;
     // Gone and old: the list alone is empty right after a start.
     const listed = new Set(list.map((a) => a.address));
-    for (const [k, c] of Object.entries(this.changed)) if (!listed.has(k) && now - c.at > 30 * 86400000) delete this.changed[k];
+    for (const [k, c] of Object.entries(this.changed))
+      if (!listed.has(k) && now - c.at > 30 * 86400000) delete this.changed[k];
     localStorage.setItem("changed", JSON.stringify(this.changed));
   }
 
@@ -147,12 +185,14 @@ export default class Agents extends View {
     const cur = list.find((a) => a.focused);
     const same = cur && cur.address === this.held?.address;
     // Arriving, or any change but done turning idle, sets what it was.
-    if (!same || cur.status !== "idle") this.held = cur ? { address: cur.address, rank: RANK[cur.status] ?? 0 } : null;
+    if (!same || cur.status !== "idle")
+      this.held = cur ? { address: cur.address, rank: RANK[cur.status] ?? 0 } : null;
   }
 
   rank(a) {
-    const sawDone = a.address === this.held?.address && this.held.rank === RANK.done && a.status === "idle";
-    return sawDone ? RANK.done : RANK[a.status] ?? 0;
+    const sawDone =
+      a.address === this.held?.address && this.held.rank === RANK.done && a.status === "idle";
+    return sawDone ? RANK.done : (RANK[a.status] ?? 0);
   }
 
   sortMenu(t) {
@@ -163,22 +203,30 @@ export default class Agents extends View {
       .bg(t.popover)
       .text_size(12)
       .child(div().px(8).pt(4).pb(6).text_size(11).text_color(t.dim).child("sort agents"))
-      .children(SORTS.map((s) => h_flex()
-        .id(`sort-${s.id}`)
-        .h(26)
-        .px(8)
-        .gap(9)
-        .rounded(0)
-        .items_center()
-        .text_color(t.foreground)
-        .hover((el) => el.bg(t.foreground + "14"))
-        .on_click(() => {
-          setShared("agents.sort", s.id);
-          closeOverlay(props().overlay);
-        })
-        .child(svg(`mods/vectron-icons/${s.icon}.svg`).size(14).flex_none().text_color(t.muted))
-        .child(div().flex_1().child(s.label))
-        .when(s.id === on, (el) => el.child(svg("mods/vectron-icons/check.svg").size(14).flex_none().text_color(t.foreground)))));
+      .children(
+        SORTS.map((s) =>
+          h_flex()
+            .id(`sort-${s.id}`)
+            .h(26)
+            .px(8)
+            .gap(9)
+            .rounded(0)
+            .items_center()
+            .text_color(t.foreground)
+            .hover((el) => el.bg(t.foreground + "14"))
+            .on_click(() => {
+              setShared("agents.sort", s.id);
+              closeOverlay(props().overlay);
+            })
+            .child(svg(`mods/vectron-icons/${s.icon}.svg`).size(14).flex_none().text_color(t.muted))
+            .child(div().flex_1().child(s.label))
+            .when(s.id === on, (el) =>
+              el.child(
+                svg("mods/vectron-icons/check.svg").size(14).flex_none().text_color(t.foreground),
+              ),
+            ),
+        ),
+      );
   }
 
   peek(addr) {
@@ -215,23 +263,82 @@ export default class Agents extends View {
       .when(on, (el) => el.bg(t.foreground + "2e"))
       .hover((s) => s.bg(t.foreground + "14"))
       .on_click(() => this.peek(k.address))
-      .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
-        .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
-        .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(0))))
-      .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
-      .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
+      .children(
+        s.lines.map((l) =>
+          div()
+            .self_start()
+            .mt(-4)
+            .w(9)
+            .h(17)
+            .mr(4)
+            .flex_none()
+            .when(Boolean(l), (el) => el.border_l(1.5).border_color(t.input))
+            .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(0)),
+        ),
+      )
+      .when(Boolean(pic), (el) => el.child(div().mr(8).child(pic)))
+      .child(
+        div()
+          .flex_1()
+          .truncate()
+          .text_color(on ? t.foreground : t.muted)
+          .child(k.name || k.template || k.program?.name || k.address),
+      )
       .child(this.status(t, { status: st }, compact));
   }
 
   // compact: a ! for blocked where a header already says "blocked".
   status(t, a, compact = false) {
     const color = t[a.status] ?? t.dim;
-    if (a.status === "working") return div().size(7).mx(3).flex_none().rounded(0).bg(t.working).loop("opacity", { from: 0.35, to: 1, period: 1200 });
-    if (a.status === "blocked" && compact) return div().size(14).flex_none().rounded(0).bg(t.blocked + "26").text_size(10.5).font_bold().text_color(t.blocked).flex().items_center().justify_center().child("!");
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(0).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Blocked");
+    if (a.status === "working")
+      return div()
+        .size(7)
+        .mx(3)
+        .flex_none()
+        .rounded(0)
+        .bg(t.working)
+        .loop("opacity", { from: 0.35, to: 1, period: 1200 });
+    if (a.status === "blocked" && compact)
+      return div()
+        .size(14)
+        .flex_none()
+        .rounded(0)
+        .bg(t.blocked + "26")
+        .text_size(10.5)
+        .font_bold()
+        .text_color(t.blocked)
+        .flex()
+        .items_center()
+        .justify_center()
+        .child("!");
+    if (a.status === "blocked")
+      return div()
+        .flex_none()
+        .px(6)
+        .h(18)
+        .rounded(0)
+        .bg(t.blocked + "26")
+        .text_size(10.5)
+        .font_semibold()
+        .text_color(t.blocked)
+        .flex()
+        .items_center()
+        .child("Blocked");
     // Idle: a hollow square; done: a filled one.
-    if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(0).border(1).border_color(t.idle ?? t.dim);
-    return div().size(7).mx(3).flex_none().rounded(0).bg(a.status === "done" ? color : t.dim + "00");
+    if (a.status === "idle")
+      return div()
+        .size(7)
+        .mx(3)
+        .flex_none()
+        .rounded(0)
+        .border(1)
+        .border_color(t.idle ?? t.dim);
+    return div()
+      .size(7)
+      .mx(3)
+      .flex_none()
+      .rounded(0)
+      .bg(a.status === "done" ? color : t.dim + "00");
   }
 
   // Number shortcuts follow the current sidebar order, including its sort and pins.
@@ -253,14 +360,18 @@ export default class Agents extends View {
     const live = new Set(agents().map((a) => a.address));
     const ids = (this.order ?? []).filter((a) => live.has(a));
     if (m === "down" || m === "up") this.cursor = step(ids, this.cursor, m === "down" ? 1 : -1);
-    else if ((m === "open" || m === "right") && this.cursor) { run("agent.focus", { terminal: this.cursor }); toTerminal(); }
+    else if ((m === "open" || m === "right") && this.cursor) {
+      run("agent.focus", { terminal: this.cursor });
+      toTerminal();
+    }
   }
 
   render(cx) {
     if (!props()?.overlay) {
       this.key = announce(MOD, props(), "Agents");
       // Selected just now: the cursor starts on the focused agent, else the first.
-      if (entered(this, this.key)) this.cursor = agents().find((a) => a.focused)?.address ?? this.order?.[0] ?? null;
+      if (entered(this, this.key))
+        this.cursor = agents().find((a) => a.focused)?.address ?? this.order?.[0] ?? null;
       this.keyOn = isActive(this.key);
     }
     const t = theme();
@@ -268,7 +379,10 @@ export default class Agents extends View {
     const collapsed = narrow();
     const sort = sortOf();
     let list = agents();
-    this.inputGlow.selection(cx, this.keyOn ? this.cursor : list.find((a) => a.focused)?.address ?? null);
+    this.inputGlow.selection(
+      cx,
+      this.keyOn ? this.cursor : (list.find((a) => a.focused)?.address ?? null),
+    );
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     this.migratePins(all);
@@ -277,9 +391,20 @@ export default class Agents extends View {
     this.track(list, now);
     this.hold(list);
     const byPriority = sort.id === "priority";
-    const urgency = new Map(list.map((a) => [a.address, Math.max(this.rank(a), ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0))]));
+    const urgency = new Map(
+      list.map((a) => [
+        a.address,
+        Math.max(
+          this.rank(a),
+          ...this.tree(all, a.address).map((s) => RANK[kidStatus(s.t, this.listed)] ?? 0),
+        ),
+      ]),
+    );
     const rankOf = (a) => urgency.get(a.address);
-    if (byPriority) list = [...list].sort((x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq);
+    if (byPriority)
+      list = [...list].sort(
+        (x, y) => rankOf(y) - rankOf(x) || this.since(y) - this.since(x) || y.seq - x.seq,
+      );
     const pinned = list.filter((a) => a.pinned);
     const rest = list.filter((a) => !a.pinned);
     list = [...pinned, ...rest];
@@ -316,7 +441,11 @@ export default class Agents extends View {
           open ? this.folded.add(a.address) : this.folded.delete(a.address);
           cx.notify();
         })
-        .child(svg(`mods/vectron-icons/chevron-${open ? "down" : "right"}.svg`).size(11).flex_none())
+        .child(
+          svg(`mods/vectron-icons/chevron-${open ? "down" : "right"}.svg`)
+            .size(11)
+            .flex_none(),
+        )
         .when(!open, (el) => el.child(String(subs.length)));
     };
 
@@ -327,23 +456,32 @@ export default class Agents extends View {
     const allPanes = panes();
     const leads = leadPanes(allPanes);
     const allSpaces = spaces();
-    const tabLabels = new Map(allSpaces.flatMap(s => s.tabs).map(tab => [tab.id, title(tab, leads.get(tab.id))]));
-    const labels = new Map(list.map(a => [a.address, tabLabels.get(a.tab) ?? (a.title || a.program?.name || "")]));
+    const tabLabels = new Map(
+      allSpaces.flatMap((s) => s.tabs).map((tab) => [tab.id, title(tab, leads.get(tab.id))]),
+    );
+    const labels = new Map(
+      list.map((a) => [a.address, tabLabels.get(a.tab) ?? (a.title || a.program?.name || "")]),
+    );
     const label = (a) => labels.get(a.address);
     // The icon already names the program, so a detail that is only "Claude Code" or "Codex" says nothing.
-    const isProgram = (a, l) => !l || /^\d+$/.test(l) || l === a.program?.name || l === "Claude Code";
-    const work = a => {
+    const isProgram = (a, l) =>
+      !l || /^\d+$/.test(l) || l === a.program?.name || l === "Claude Code";
+    const work = (a) => {
       if (!isProgram(a, label(a))) return label(a);
       const own = (a.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
       return isProgram(a, own) ? null : own;
     };
-    const detail = new Map(list.map(a => [a.address, work(a)]));
+    const detail = new Map(list.map((a) => [a.address, work(a)]));
     const seen = {};
     // Rows name the agent's space, not its working folder.
-    const place = a => a.space_name;
-    for (const a of list) { const k = `${place(a)}\u0000${detail.get(a.address) ?? ""}`; seen[k] = (seen[k] ?? 0) + 1; }
+    const place = (a) => a.space_name;
     for (const a of list) {
-      if (detail.get(a.address) == null && seen[`${place(a)}\u0000`] > 1 && !isProgram(a, label(a))) detail.set(a.address, label(a));
+      const k = `${place(a)}\u0000${detail.get(a.address) ?? ""}`;
+      seen[k] = (seen[k] ?? 0) + 1;
+    }
+    for (const a of list) {
+      if (detail.get(a.address) == null && seen[`${place(a)}\u0000`] > 1 && !isProgram(a, label(a)))
+        detail.set(a.address, label(a));
     }
 
     const row = (a, i, subs = []) => {
@@ -353,9 +491,33 @@ export default class Agents extends View {
       const machine = a.address.includes("/") ? a.address.split("/")[0] : null;
       // The 44px rail: the program's icon in a square, status as a corner square ("!" when it's blocked).
       if (collapsed) {
-        const corner = a.status === "blocked" ? div().absolute().top(1).right(1).size(11).bg(t.blocked).text_size(8.5).font_bold().text_color(t.background).flex().items_center().justify_center().child("!")
-          : ["working", "done", "idle"].includes(a.status) ? div().absolute().top(2).right(2).size(5).when(a.status === "idle", (d) => d.border(1).border_color(t.idle ?? t.dim)).when(a.status !== "idle", (d) => d.bg(t[a.status] ?? t.dim))
-            .when(a.status === "working", (d) => d.loop("opacity", { from: 0.35, to: 1, period: 1200 })) : null;
+        const corner =
+          a.status === "blocked"
+            ? div()
+                .absolute()
+                .top(1)
+                .right(1)
+                .size(11)
+                .bg(t.blocked)
+                .text_size(8.5)
+                .font_bold()
+                .text_color(t.background)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child("!")
+            : ["working", "done", "idle"].includes(a.status)
+              ? div()
+                  .absolute()
+                  .top(2)
+                  .right(2)
+                  .size(5)
+                  .when(a.status === "idle", (d) => d.border(1).border_color(t.idle ?? t.dim))
+                  .when(a.status !== "idle", (d) => d.bg(t[a.status] ?? t.dim))
+                  .when(a.status === "working", (d) =>
+                    d.loop("opacity", { from: 0.35, to: 1, period: 1200 }),
+                  )
+              : null;
         return div()
           .id(`ag-${a.address}`)
           .relative()
@@ -371,10 +533,19 @@ export default class Agents extends View {
           .font_bold()
           .tooltip([label(a), more, machine].filter(Boolean).join(" \u00b7 "))
           .when(a.focused, (el) => el.bg(t.foreground + "2e").border_color(t.foreground + "40"))
-          .when(!a.focused, (el) => el.border_color(t.border).hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")))
+          .when(!a.focused, (el) =>
+            el
+              .border_color(t.border)
+              .hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")),
+          )
           .when(this.keyOn && this.cursor === a.address, (el) => el.border_color(glow(t)))
           .on_click(() => run("pane.focus", { pane: a.pane }))
-          .child(pic ?? div().text_color(t.muted).child(String(i + 1)))
+          .child(
+            pic ??
+              div()
+                .text_color(t.muted)
+                .child(String(i + 1)),
+          )
           .when(Boolean(corner), (el) => el.child(corner));
       }
       const when = this.since(a);
@@ -414,49 +585,107 @@ export default class Agents extends View {
         .border_color(this.keyOn && this.cursor === a.address ? glow(t) : t.foreground + "00")
         .items_center()
         .gap(8)
-        .when(a.focused, (el) => el.bg(t.foreground + "2e").child(div().absolute().left(-1).top(-1).bottom(-1).w(2).bg(t.accent)))
+        .when(a.focused, (el) =>
+          el
+            .bg(t.foreground + "2e")
+            .child(div().absolute().left(-1).top(-1).bottom(-1).w(2).bg(t.accent)),
+        )
         .cursor_pointer()
-        .when(!a.focused, (el) => el.hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")))
+        .when(!a.focused, (el) =>
+          el.hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")),
+        )
         .on_hover((on, cx) => {
           if (on) this.hovered = a.address;
           else if (this.hovered === a.address) this.hovered = null;
           cx.notify();
         })
         .on_click(() => run("pane.focus", { pane: a.pane }))
-        .when(Boolean(pic), el => el.child(div().id(`agent-fold-${a.address}`)
-          .when(subs.length > 0, el => el.on_click((_e, cx) => {
-            cx.stop_propagation();
-            this.folded.has(a.address) ? this.folded.delete(a.address) : this.folded.add(a.address);
-            cx.notify();
-          })).child(pic)))
-        .child(v_flex().flex_1().min_w(0)
-          .child(task
-            ? div().min_w(0).truncate().line_height("15px").text_color(idle ? t.muted : t.foreground).child(task)
-            : div().line_height("15px").text_color(t.ansi6 ?? t.dim).child("✦ New ✦"))
-          .child(h_flex().min_w(0).text_size(11).line_height("13px").text_color(t.dim)
-            .child(div().flex_none().child(`${a.tab_index} · `))
-            .child(div().min_w(0).truncate().child(name))))
-        .when(Boolean(machine), el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
-        .when(subs.length > 0, el => el.child(fold(a, subs)))
-        .when(this.hovered === a.address, el => el.child(pin))
-        .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).line_height("11px").text_color(t.dim).child(duration(now - when))))
+        .when(Boolean(pic), (el) =>
+          el.child(
+            div()
+              .id(`agent-fold-${a.address}`)
+              .when(subs.length > 0, (el) =>
+                el.on_click((_e, cx) => {
+                  cx.stop_propagation();
+                  this.folded.has(a.address)
+                    ? this.folded.delete(a.address)
+                    : this.folded.add(a.address);
+                  cx.notify();
+                }),
+              )
+              .child(pic),
+          ),
+        )
+        .child(
+          v_flex()
+            .flex_1()
+            .min_w(0)
+            .child(
+              task
+                ? div()
+                    .min_w(0)
+                    .truncate()
+                    .line_height("15px")
+                    .text_color(idle ? t.muted : t.foreground)
+                    .child(task)
+                : div()
+                    .line_height("15px")
+                    .text_color(t.ansi6 ?? t.dim)
+                    .child("✦ New ✦"),
+            )
+            .child(
+              h_flex()
+                .min_w(0)
+                .text_size(11)
+                .line_height("13px")
+                .text_color(t.dim)
+                .child(div().flex_none().child(`${a.tab_index} · `))
+                .child(div().min_w(0).truncate().child(name)),
+            ),
+        )
+        .when(Boolean(machine), (el) =>
+          el.child(div().text_size(10).text_color(t.dim).child(machine)),
+        )
+        .when(subs.length > 0, (el) => el.child(fold(a, subs)))
+        .when(this.hovered === a.address, (el) => el.child(pin))
+        .when(this.hovered !== a.address && Boolean(when), (el) =>
+          el.child(
+            div()
+              .flex_none()
+              .text_size(11)
+              .line_height("11px")
+              .text_color(t.dim)
+              .child(duration(now - when)),
+          ),
+        )
         .child(this.status(t, a, byPriority && !isPinned));
     };
 
     // Groups in list order: spaces (grouped) or priority sections. Agents of a
     // space are next to each other in agents(), so neighbours make a group.
-    const groups = pinned.length ? [{ id: "pinned", label: "pinned", status: null, members: pinned }] : [];
+    const groups = pinned.length
+      ? [{ id: "pinned", label: "pinned", status: null, members: pinned }]
+      : [];
     for (const a of rest) {
       const r = rankOf(a) || RANK.idle;
       const id = byPriority ? `sec-${r}` : `sp-${a.space}`;
       if (groups.at(-1)?.id === id) groups.at(-1).members.push(a);
-      else groups.push({ id, label: byPriority ? SECTION[r] : a.space_name || "", status: byPriority ? SECTION_STATUS[r] : null, members: [a] });
+      else
+        groups.push({
+          id,
+          label: byPriority ? SECTION[r] : a.space_name || "",
+          status: byPriority ? SECTION_STATUS[r] : null,
+          members: [a],
+        });
     }
 
     // A group's header; it folds the group. Folded, it says how many and the most urgent state.
     const header = (g) => {
       const open = !this.folded.has(g.id);
-      const top = g.members.reduce((m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m), null);
+      const top = g.members.reduce(
+        (m, a) => ((RANK[a.status] ?? 0) > (RANK[m] ?? 0) ? a.status : m),
+        null,
+      );
       return h_flex()
         .id(g.id)
         .px(8)
@@ -472,16 +701,32 @@ export default class Agents extends View {
           open ? this.folded.add(g.id) : this.folded.delete(g.id);
           cx.notify();
         })
-        .child(div().truncate().text_color(t[g.status] ?? t.dim).child((g.label ?? "").toLowerCase()))
-        .when(byPriority || !open, (el) => el.child(div().text_color(t.dim).child(`[${g.members.length}]`)))
+        .child(
+          div()
+            .truncate()
+            .text_color(t[g.status] ?? t.dim)
+            .child((g.label ?? "").toLowerCase()),
+        )
+        .when(byPriority || !open, (el) =>
+          el.child(div().text_color(t.dim).child(`[${g.members.length}]`)),
+        )
         .child(div().flex_1())
-        .when(!open, (el) => el
-          .when(!byPriority && top && top !== "idle", (el) => el.child(this.status(t, { status: top }, true)))
-          .child(svg("mods/vectron-icons/chevron-right.svg").size(11).flex_none().text_color(t.dim)));
+        .when(!open, (el) =>
+          el
+            .when(!byPriority && top && top !== "idle", (el) =>
+              el.child(this.status(t, { status: top }, true)),
+            )
+            .child(
+              svg("mods/vectron-icons/chevron-right.svg").size(11).flex_none().text_color(t.dim),
+            ),
+        );
     };
     const rows = collapsed
       ? list.flatMap(withKids)
-      : groups.flatMap((g) => [header(g), ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids))]);
+      : groups.flatMap((g) => [
+          header(g),
+          ...(this.folded.has(g.id) ? [] : g.members.flatMap(withKids)),
+        ]);
 
     return v_flex()
       .relative()
@@ -500,7 +745,13 @@ export default class Agents extends View {
             .flex_none()
             .items_center()
             .justify_between()
-            .child(div().text_size(11).font_medium().text_color(t.foreground).child(`AGENTS [${list.length}]`))
+            .child(
+              div()
+                .text_size(11)
+                .font_medium()
+                .text_color(t.foreground)
+                .child(`AGENTS [${list.length}]`),
+            )
             .child(
               div()
                 .id("ag-sort")
@@ -509,16 +760,43 @@ export default class Agents extends View {
                 .rounded(0)
                 .text_color(t.dim)
                 .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
-                .on_click(() => openOverlay({ mod: "vectron-agents", kind: "popup", width: 200, height: 140, props: { sortMenu: true } }))
+                .on_click(() =>
+                  openOverlay({
+                    mod: "vectron-agents",
+                    kind: "popup",
+                    width: 200,
+                    height: 140,
+                    props: { sortMenu: true },
+                  }),
+                )
                 .tooltip(`Sort agents: ${sort.label}`)
                 .child(svg(`mods/vectron-icons/${sort.icon}.svg`).size(14)),
             ),
         ),
       )
       .when(list.length === 0 && !collapsed, (el) =>
-        el.child(div().px(12).text_size(12).text_color(t.dim).child("No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.")),
+        el.child(
+          div()
+            .px(12)
+            .text_size(12)
+            .text_color(t.dim)
+            .child(
+              "No agent status yet. Agents show up here when they report their status. Older versions and agents inside tmux may not.",
+            ),
+        ),
       )
-      .child(v_flex().id("ag-list").flex_1().min_h(0).px(collapsed ? 0 : 10).when(collapsed, (el) => el.pt(10).gap(6).items_center()).pb(10).overflow_y_scrollbar().mode("always").children(rows))
+      .child(
+        v_flex()
+          .id("ag-list")
+          .flex_1()
+          .min_h(0)
+          .px(collapsed ? 0 : 10)
+          .when(collapsed, (el) => el.pt(10).gap(6).items_center())
+          .pb(10)
+          .overflow_y_scrollbar()
+          .mode("always")
+          .children(rows),
+      )
       .when(collapsed, (el) =>
         el.child(
           h_flex()
@@ -538,7 +816,12 @@ export default class Agents extends View {
                 .bg(t.foreground + "0a")
                 .text_color(t.muted)
                 .tooltip("Expand sidebar")
-                .hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40").text_color(t.foreground))
+                .hover((s) =>
+                  s
+                    .bg(t.foreground + "14")
+                    .border_color(t.foreground + "40")
+                    .text_color(t.foreground),
+                )
                 .on_click(toggleSidebar)
                 .child(svg("mods/vectron-icons/chevron-right.svg").size(14)),
             ),

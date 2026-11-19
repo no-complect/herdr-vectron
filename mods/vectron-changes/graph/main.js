@@ -12,9 +12,20 @@ import { Settings } from "./settings.js";
 export default class GitGraph extends View {
   init(_props, cx) {
     const role = props()?.role;
-    this.part = role === "menu" ? new Menu() : role === "dialog" ? new Dialog() : role === "update" ? new Update() : role === "settings" ? new Settings() : new Graph();
+    this.part =
+      role === "menu"
+        ? new Menu()
+        : role === "dialog"
+          ? new Dialog()
+          : role === "update"
+            ? new Update()
+            : role === "settings"
+              ? new Settings()
+              : new Graph();
     this.part.init(cx);
   }
 
-  render(cx) { return this.part.render(cx); }
+  render(cx) {
+    return this.part.render(cx);
+  }
 }

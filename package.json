@@ -1,0 +1,9 @@
+{
+  "name": "herdr-vectron",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-vm-modules --test mods/test/*.test.mjs themes/test/*.test.mjs && python3 -m unittest discover -s mods/test -p 'test_*.py'",
+    "test:herdr": "node mods/test/check-herdr.mjs"
+  }
+}

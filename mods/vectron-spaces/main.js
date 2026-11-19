@@ -6,7 +6,25 @@ import { InputGlow } from "./input-glow.js";
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { spaces, machines, panes, agents, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, home, props, nextCommand } from "herdr";
+import {
+  spaces,
+  machines,
+  panes,
+  agents,
+  run,
+  openOverlay,
+  exec,
+  hc,
+  theme,
+  shared,
+  setShared,
+  watchFolder,
+  window,
+  layout,
+  home,
+  props,
+  nextCommand,
+} from "herdr";
 import { announce, isActive, entered, move, keepKeys } from "./keynav.js";
 
 // Keyboard navigation (keynav.js): while a driver such as whistle selects this list, it glows
@@ -14,7 +32,8 @@ import { announce, isActive, entered, move, keepKeys } from "./keynav.js";
 const MOD = "vectron-spaces";
 // How this mod shows its keynav field: the field glows, its cursor item gets an outline.
 const glow = (t) => t.foreground + "b3";
-const frame = (t) => div().absolute().top(0).left(0).right(0).bottom(0).border_2().border_color(glow(t));
+const frame = (t) =>
+  div().absolute().top(0).left(0).right(0).bottom(0).border_2().border_color(glow(t));
 // One step through a list of ids, stopping at the ends.
 function step(ids, cur, d) {
   if (!ids.length) return null;
@@ -47,14 +66,33 @@ const rowHeight = ({ tree }) => (tree ? 24 : 36);
 // A space's second line: its open tabs, then how many of its agents are in each state, most
 // urgent first ("[3] · ■1 □2"), each symbol in its state's color; states with none are left
 // out. No agents: "[1] · no agents", the words dim and italic. `counts`: status -> how many.
-const STATES = [["blocked", "◆"], ["working", "■"], ["done", "✓"], ["idle", "□"]];
+const STATES = [
+  ["blocked", "◆"],
+  ["working", "■"],
+  ["done", "✓"],
+  ["idle", "□"],
+];
 function subtitle(t, counts, tabs) {
   const shown = STATES.filter(([s]) => counts?.[s]);
-  const states = !shown.length ? div().italic().child("no agents")
-    : h_flex().gap(8).children(shown.map(([s, mark]) => h_flex().gap(2)
-      .child(div().text_color(s === "idle" ? (t.idle ?? t.dim) : tone(t, s)).child(mark))
-      .child(div().child(String(counts[s])))));
-  return h_flex().child(div().flex_none().child(`[${tabs}] · `)).child(states);
+  const states = !shown.length
+    ? div().italic().child("no agents")
+    : h_flex()
+        .gap(8)
+        .children(
+          shown.map(([s, mark]) =>
+            h_flex()
+              .gap(2)
+              .child(
+                div()
+                  .text_color(s === "idle" ? (t.idle ?? t.dim) : tone(t, s))
+                  .child(mark),
+              )
+              .child(div().child(String(counts[s]))),
+          ),
+        );
+  return h_flex()
+    .child(div().flex_none().child(`[${tabs}] · `))
+    .child(states);
 }
 const where = (s, ps) => JSON.stringify([s.machine ?? null, place(s, ps)]);
 const base = (path) => path.replace(/\/+$/, "").split("/").pop();
@@ -70,7 +108,12 @@ export function tone(t, status) {
 export default class Spaces extends View {
   init(_props, cx) {
     this.inputGlow = new InputGlow();
-    cx.spawn(async (cx) => { for (;;) { this.keynav(move(await nextCommand())); cx.notify(); } });
+    cx.spawn(async (cx) => {
+      for (;;) {
+        this.keynav(move(await nextCommand()));
+        cx.notify();
+      }
+    });
     this.git = {}; // where() -> { name, branch, ahead, behind, repo, linked }, null: not a repo
     this.checked = {}; // where() -> when it was last looked at
     this.unsure = new Set(); // where()s git couldn't answer for (a machine away)
@@ -90,7 +133,7 @@ export default class Spaces extends View {
     for (const state of Object.values(this.reconnecting)) state.busy = false;
     this.folded = new Set(JSON.parse(localStorage.getItem("machines.folded") ?? "[]"));
     this.refreshMachines(cx);
-    cx.timer.every(15000, cx => this.refreshMachines(cx));
+    cx.timer.every(15000, (cx) => this.refreshMachines(cx));
     // `git status` walks the whole tree, on another machine a process there:
     // only when its answer could have changed (see `due`).
     cx.timer.every(250, (cx) => this.checkNew(cx));
@@ -114,7 +157,8 @@ export default class Spaces extends View {
     for (const s of sp) at[s.id] = where(s, ps);
     const keys = new Set(Object.values(at).filter((k) => JSON.parse(k)[1]));
     const due = new Set([...keys].filter((k) => !(k in this.git)));
-    for (const [id, k] of Object.entries(at)) if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
+    for (const [id, k] of Object.entries(at))
+      if (this.at[id] && this.at[id] !== k && keys.has(k)) due.add(k);
     this.at = at;
     const spaceOf = {};
     for (const s of sp) for (const t of s.tabs ?? []) spaceOf[t.id] = s;
@@ -122,18 +166,21 @@ export default class Spaces extends View {
     for (const p of ps) {
       if (!p.terminal || !spaceOf[p.tab]) continue;
       busy[p.pane] = p.status === "working" || !(p.program?.shell || p.program?.agent);
-      if (this.busy[p.pane] && !busy[p.pane]) this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
+      if (this.busy[p.pane] && !busy[p.pane])
+        this.sameRepo(at[spaceOf[p.tab].id], keys).forEach((k) => due.add(k));
     }
     this.busy = busy;
     for (const m of machines()) {
       const ready = m.layout === "ready";
-      if (ready && this.ready[m.name] === false) for (const k of keys) if (JSON.parse(k)[0] === m.name) due.add(k);
+      if (ready && this.ready[m.name] === false)
+        for (const k of keys) if (JSON.parse(k)[0] === m.name) due.add(k);
       this.ready[m.name] = ready;
     }
     if (window().active) {
       for (const k of keys) {
         const asks = this.git[k] || this.unsure.has(k);
-        if (asks && !this.folded.has(JSON.parse(k)[0]) && now - (this.checked[k] ?? 0) > FALLBACK) due.add(k);
+        if (asks && !this.folded.has(JSON.parse(k)[0]) && now - (this.checked[k] ?? 0) > FALLBACK)
+          due.add(k);
       }
     }
     return due;
@@ -146,31 +193,40 @@ export default class Spaces extends View {
   }
 
   refreshMachines(cx) {
-    cx.spawn(async cx => {
-      try { const r = await hc(["machine", "ls", "--json"]); if (r.code === 0) this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary); } catch {}
+    cx.spawn(async (cx) => {
+      try {
+        const r = await hc(["machine", "ls", "--json"]);
+        if (r.code === 0)
+          this.machines = (JSON.parse(r.stdout).machines ?? []).filter((m) => !m.temporary);
+      } catch {}
       cx.notify();
     });
   }
 
   rebuilt(machine) {
-    return machine?.state === "unreachable" && /^a different core answers there \("[^"]+"\)$/.test(machine.why ?? "");
+    return (
+      machine?.state === "unreachable" &&
+      /^a different core answers there \("[^"]+"\)$/.test(machine.why ?? "")
+    );
   }
 
   reconnect(machine, cx) {
     const name = machine.name;
     if (this.reconnecting[name]?.busy) return;
-    const state = this.reconnecting[name] ??= { machine, removed: false };
+    const state = (this.reconnecting[name] ??= { machine, removed: false });
     state.busy = true;
     state.error = null;
     localStorage.setItem("machines.reconnecting", JSON.stringify(this.reconnecting));
     cx.notify();
-    cx.spawn(async cx => {
+    cx.spawn(async (cx) => {
       try {
-        const ask = async args => {
+        const ask = async (args) => {
           const r = await hc([...args, "--json"]);
           if (r.code !== 0) {
             let error;
-            try { error = JSON.parse(r.stdout || r.stderr).error?.message; } catch {}
+            try {
+              error = JSON.parse(r.stdout || r.stderr).error?.message;
+            } catch {}
             throw new Error(error || r.stderr || r.stdout || "Couldn't connect.");
           }
         };
@@ -210,7 +266,13 @@ export default class Spaces extends View {
         this.pending.clear();
         for (const key of keys) await this.check(key, cx);
       }
-      const used = new Set(Object.values(this.git).filter(Boolean).map((g) => JSON.parse(g.repo)).filter(([on]) => !on).map(([, repo]) => repo));
+      const used = new Set(
+        Object.values(this.git)
+          .filter(Boolean)
+          .map((g) => JSON.parse(g.repo))
+          .filter(([on]) => !on)
+          .map(([, repo]) => repo),
+      );
       for (const repo of this.watching) if (!used.has(repo)) this.watching.delete(repo);
       this.refreshing = false;
       cx.notify();
@@ -225,7 +287,18 @@ export default class Spaces extends View {
     try {
       // No optional locks: a status that touched the index would wake the watch again.
       // Writes nothing under .git (index lock, fsmonitor cookie): watch() would wake on it.
-      const r = await exec("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "status", "--porcelain=v2", "--branch"], { cwd, on });
+      const r = await exec(
+        "git",
+        [
+          "--no-optional-locks",
+          "-c",
+          "core.fsmonitor=false",
+          "status",
+          "--porcelain=v2",
+          "--branch",
+        ],
+        { cwd, on },
+      );
       if (r.code !== 0) {
         // Only git's own "no" is remembered as no repo; anything else is asked again.
         if (!/not a git repository/i.test(r.stderr)) this.unsure.add(key);
@@ -234,10 +307,23 @@ export default class Spaces extends View {
       }
       // The repo's own .git folder names it; a worktree's top differs from it.
       const top = await exec("git", ["rev-parse", "--show-toplevel"], { cwd, on });
-      const common = await exec("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd, on });
+      const common = await exec(
+        "git",
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        { cwd, on },
+      );
       const repo = common.stdout.trim();
-      const name = repo.endsWith("/.git") ? base(repo.slice(0, -5)) : base(repo).replace(/\.git$/, "");
-      const info = { name, branch: null, ahead: 0, behind: 0, repo: JSON.stringify([on, repo]), linked: repo !== `${top.stdout.trim()}/.git` };
+      const name = repo.endsWith("/.git")
+        ? base(repo.slice(0, -5))
+        : base(repo).replace(/\.git$/, "");
+      const info = {
+        name,
+        branch: null,
+        ahead: 0,
+        behind: 0,
+        repo: JSON.stringify([on, repo]),
+        linked: repo !== `${top.stdout.trim()}/.git`,
+      };
       for (const line of r.stdout.split("\n")) {
         if (line.startsWith("# branch.head ")) info.branch = line.slice(14);
         else if (line.startsWith("# branch.ab ")) {
@@ -263,26 +349,47 @@ export default class Spaces extends View {
         while (this.watching.has(repo)) {
           await watchFolder(repo);
           const mine = JSON.stringify([null, repo]);
-          if (this.watching.has(repo)) this.refreshGit(Object.keys(this.git).filter((k) => this.git[k]?.repo === mine), cx);
+          if (this.watching.has(repo))
+            this.refreshGit(
+              Object.keys(this.git).filter((k) => this.git[k]?.repo === mine),
+              cx,
+            );
         }
-      } catch { this.watching.delete(repo); }
+      } catch {
+        this.watching.delete(repo);
+      }
     });
   }
 
   menu(w) {
     // A popup is as tall as its items; height is only the most.
-    openOverlay({ mod: "menu", kind: "popup", width: 200, height: 260, props: { tab: "space", target: { id: w.id } } });
+    openOverlay({
+      mod: "menu",
+      kind: "popup",
+      width: 200,
+      height: 260,
+      props: { tab: "space", target: { id: w.id } },
+    });
   }
 
   orderingDue(now) {
-    return this.ordering && now - this.ordering.at >= 1000
-      && this.ordering.machines.every(name => machines().some(m => m.name === name && m.layout === "ready"));
+    return (
+      this.ordering &&
+      now - this.ordering.at >= 1000 &&
+      this.ordering.machines.every((name) =>
+        machines().some((m) => m.name === name && m.layout === "ready"),
+      )
+    );
   }
 
   // Spaces in order, each worktree space moved under its main checkout's.
   ordered() {
-    const sp = spaces(), ps = panes();
-    const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
+    const sp = spaces(),
+      ps = panes();
+    const ready = (w) =>
+      this.shown.has(w.id) ||
+      where(w, ps) in this.git ||
+      Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
     const list = sp.map((w, i) => ({ w, i, g: this.git[where(w, ps)] ?? null }));
     const mains = new Set(list.filter((r) => r.g && !r.g.linked).map((r) => r.g.repo));
@@ -299,8 +406,8 @@ export default class Spaces extends View {
     }
     // Simulate the batch so later indexes include earlier moves. An attempted
     // write can lose a sync conflict: allow the echo to settle before retrying.
-    const order = sp.map(w => w.id);
-    const target = out.map(r => r.w.id);
+    const order = sp.map((w) => w.id);
+    const target = out.map((r) => r.w.id);
     const key = JSON.stringify([order, target, machines()]);
     if (order.every((id, i) => id === target[i])) {
       this.ordering = null;
@@ -316,56 +423,159 @@ export default class Spaces extends View {
       }
       this.ordering.machines = [...moved];
     }
-    return out.filter(r => this.shown.has(r.w.id));
+    return out.filter((r) => this.shown.has(r.w.id));
   }
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
     const rows = this.ordered();
     const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
-    const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name), ...Object.keys(this.reconnecting)])].sort();
-    const loading = m => {
-      const layout = machines().find(k => k.name === m)?.layout;
-      return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
-        || spaces().some(s => (s.machine ?? null) === m && !this.shown.has(s.id));
+    const remote = [
+      ...new Set([
+        ...rows.map((r) => r.w.machine).filter(Boolean),
+        ...this.machines.map((m) => m.name),
+        ...Object.keys(this.reconnecting),
+      ]),
+    ].sort();
+    const loading = (m) => {
+      const layout = machines().find((k) => k.name === m)?.layout;
+      return (
+        layout === "loading" ||
+        (!layout && this.machines.some((k) => k.name === m && k.state === "connected")) ||
+        spaces().some((s) => (s.machine ?? null) === m && !this.shown.has(s.id))
+      );
     };
-    const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(26).flex_none().px(8).text_size(12).text_color(t.dim).child(collapsed ? "…" : "Loading…");
+    const loadingRow = (m) =>
+      div()
+        .id(`machine-loading-${m ?? "local"}`)
+        .h(26)
+        .flex_none()
+        .px(8)
+        .text_size(12)
+        .text_color(t.dim)
+        .child(collapsed ? "…" : "Loading…");
     if (!remote.length) return loading(null) && !rows.length ? [loadingRow(null)] : rows.map(draw);
     const machineNames = [null, ...remote];
     return machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const repair = this.reconnecting[m];
-      const machine = this.machines.find(k => k.name === m) ?? repair?.machine;
+      const machine = this.machines.find((k) => k.name === m) ?? repair?.machine;
       const connected = !m || machine?.state === "connected";
       const rebuilt = this.rebuilt(machine) || !!repair;
       const folded = this.folded.has(m);
-      const head = h_flex().id(`machine-${m ?? "local"}`).h(24).flex_none().px(collapsed ? 0 : 8).when(collapsed, el => el.w(30).justify_center()).gap(7).items_center().text_size(11).text_color(t.dim)
-        .cursor_pointer().hover(s => s.bg(t.foreground + "14").text_color(t.foreground))
+      const head = h_flex()
+        .id(`machine-${m ?? "local"}`)
+        .h(24)
+        .flex_none()
+        .px(collapsed ? 0 : 8)
+        .when(collapsed, (el) => el.w(30).justify_center())
+        .gap(7)
+        .items_center()
+        .text_size(11)
+        .text_color(t.dim)
+        .cursor_pointer()
+        .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
         .on_click((_e, cx) => {
           folded ? this.folded.delete(m) : this.folded.add(m);
           localStorage.setItem("machines.folded", JSON.stringify([...this.folded]));
           cx.notify();
         })
-        .child(svg(`mods/vectron-icons/${m ? "server" : "monitor"}.svg`).size(13).flex_none())
-        .when(!collapsed, el => el.child(div().flex_1().truncate().child(m ?? "local"))
-          .when(!connected && !rebuilt, el => el.child(div().flex_none().child((machine?.state ?? "asleep").replace(/_/g, " "))))
-          .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
-            .child(div().max_w(140).truncate().child(repair?.error || "rebuilt ·"))
-            .child(div().id(`machine-connect-${m}`).text_color(repair?.error ? t.blocked : t.muted)
-              .hover(s => s.text_color(t.foreground))
-              .tooltip(repair?.error || "This machine was rebuilt or replaced. Click to connect to the new one.")
-              .on_click((_e, cx) => { cx.stop_propagation(); this.reconnect(machine, cx); })
-              .child(repair?.busy ? "Connecting…" : "Connect"))))
-          .when(connected, el => el.child(div().id(`machine-add-${m ?? "local"}`).flex_none().px(4).rounded(0).hover(s => s.bg(t.foreground + "14").text_color(t.foreground))
-            .on_click((_e, cx) => { cx.stop_propagation(); run("space.new", { machine: m ?? "" }); }).child("+")))
-          .child(div().size(6).rounded(0).flex_none().bg(connected ? t.ansi2 : t.dim))
-          .child(svg(`mods/vectron-icons/chevron-${folded ? "right" : "down"}.svg`).size(11).flex_none()));
-      const empty = h_flex().id(`machine-new-${m ?? "local"}`).h(26).flex_none().px(8).gap(7).items_center().rounded(0)
-        .text_size(12).text_color(t.dim).hover(s => s.bg(t.foreground + "14").text_color(t.foreground))
+        .child(
+          svg(`mods/vectron-icons/${m ? "server" : "monitor"}.svg`)
+            .size(13)
+            .flex_none(),
+        )
+        .when(!collapsed, (el) =>
+          el
+            .child(
+              div()
+                .flex_1()
+                .truncate()
+                .child(m ?? "local"),
+            )
+            .when(!connected && !rebuilt, (el) =>
+              el.child(
+                div()
+                  .flex_none()
+                  .child((machine?.state ?? "asleep").replace(/_/g, " ")),
+              ),
+            )
+            .when(rebuilt, (el) =>
+              el.child(
+                h_flex()
+                  .flex_none()
+                  .gap(3)
+                  .items_center()
+                  .child(
+                    div()
+                      .max_w(140)
+                      .truncate()
+                      .child(repair?.error || "rebuilt ·"),
+                  )
+                  .child(
+                    div()
+                      .id(`machine-connect-${m}`)
+                      .text_color(repair?.error ? t.blocked : t.muted)
+                      .hover((s) => s.text_color(t.foreground))
+                      .tooltip(
+                        repair?.error ||
+                          "This machine was rebuilt or replaced. Click to connect to the new one.",
+                      )
+                      .on_click((_e, cx) => {
+                        cx.stop_propagation();
+                        this.reconnect(machine, cx);
+                      })
+                      .child(repair?.busy ? "Connecting…" : "Connect"),
+                  ),
+              ),
+            )
+            .when(connected, (el) =>
+              el.child(
+                div()
+                  .id(`machine-add-${m ?? "local"}`)
+                  .flex_none()
+                  .px(4)
+                  .rounded(0)
+                  .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
+                  .on_click((_e, cx) => {
+                    cx.stop_propagation();
+                    run("space.new", { machine: m ?? "" });
+                  })
+                  .child("+"),
+              ),
+            )
+            .child(
+              div()
+                .size(6)
+                .rounded(0)
+                .flex_none()
+                .bg(connected ? t.ansi2 : t.dim),
+            )
+            .child(
+              svg(`mods/vectron-icons/chevron-${folded ? "right" : "down"}.svg`)
+                .size(11)
+                .flex_none(),
+            ),
+        );
+      const empty = h_flex()
+        .id(`machine-new-${m ?? "local"}`)
+        .h(26)
+        .flex_none()
+        .px(8)
+        .gap(7)
+        .items_center()
+        .rounded(0)
+        .text_size(12)
+        .text_color(t.dim)
+        .hover((s) => s.bg(t.foreground + "14").text_color(t.foreground))
         .on_click(() => run("space.new", { machine: m ?? "" }))
-        .child(svg("mods/vectron-icons/plus.svg").size(12)).when(!collapsed, el => el.child("New space there"));
+        .child(svg("mods/vectron-icons/plus.svg").size(12))
+        .when(!collapsed, (el) => el.child("New space there"));
       if (!collapsed && rebuilt) return [head];
-      return [head, ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : empty])];
+      return [
+        head,
+        ...(folded ? [] : mine.length ? mine.map(draw) : [loading(m) ? loadingRow(m) : empty]),
+      ];
     });
   }
 
@@ -379,7 +589,8 @@ export default class Spaces extends View {
     // A cut-off "de…" says nothing: drop what can't show 12 characters (or all of itself).
     const fits = (w) => room() - name.length - 3 >= Math.min(w.length, 12);
     const usual = raw === "master" || raw === "main";
-    const where = [join(same(raw) ? "" : raw), join(same(raw) || usual ? "" : raw), join("")].find(fits) ?? "";
+    const where =
+      [join(same(raw) ? "" : raw), join(same(raw) || usual ? "" : raw), join("")].find(fits) ?? "";
     return h_flex()
       .flex_1()
       .min_w(0)
@@ -389,13 +600,17 @@ export default class Spaces extends View {
       .text_size(11.5)
       .text_color(t.dim)
       .when(Boolean(where), (el) => el.child(div().min_w(0).truncate().child(where)))
-      .when(g.ahead > 0, (el) => el.child(div().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`)))
-      .when(g.behind > 0, (el) => el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)));
+      .when(g.ahead > 0, (el) =>
+        el.child(div().flex_none().text_color(t.ansi2).child(`\u2191${g.ahead}`)),
+      )
+      .when(g.behind > 0, (el) =>
+        el.child(div().flex_none().text_color(t.ansi1).child(`\u2193${g.behind}`)),
+      );
   }
 
   row({ w, i, g, tree }, t) {
     const on = w.active;
-    const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
+    const fromIndex = this.pressed === null ? -1 : spaces().findIndex((s) => s.id === this.pressed);
     return v_flex()
       .relative()
       .id(`space-${w.id}`)
@@ -408,20 +623,29 @@ export default class Spaces extends View {
       .border(1)
       .border_color(this.keyOn && this.cursor === w.id ? glow(t) : t.foreground + "00")
       .when(on, (el) => el.bg(t.foreground + "2e"))
-      .when(!on, (el) => el.hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")))
+      .when(!on, (el) =>
+        el.hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40")),
+      )
       .when(on, (el) => el.child(div().absolute().left(-1).top(-1).bottom(-1).w(2).bg(t.accent)))
       .when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5))
-      .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
-        div().absolute().left(0).right(0).h(2).bg(t.accent)
-          .when(fromIndex < i, line => line.bottom(0))
-          .when(fromIndex > i, line => line.top(0)),
-      ))
+      .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) =>
+        el.child(
+          div()
+            .absolute()
+            .left(0)
+            .right(0)
+            .h(2)
+            .bg(t.accent)
+            .when(fromIndex < i, (line) => line.bottom(0))
+            .when(fromIndex > i, (line) => line.top(0)),
+        ),
+      )
       .on_mouse_down("left", () => {
         this.pressed = w.id;
         this.over = w.id;
       })
       .on_mouse_move((_e, cx) => {
-        const source = spaces().find(s => s.id === this.pressed);
+        const source = spaces().find((s) => s.id === this.pressed);
         const over = source && (source.machine ?? null) === (w.machine ?? null) ? w.id : null;
         if (this.pressed !== null && this.over !== over) {
           this.over = over;
@@ -434,7 +658,7 @@ export default class Spaces extends View {
         this.pressed = null;
         this.over = null;
         if (from !== null && over === w.id && from !== w.id) {
-          const index = spaces().findIndex(s => s.id === w.id);
+          const index = spaces().findIndex((s) => s.id === w.id);
           if (index !== -1) run("space.move", { id: from, index: index + 1 });
         } else if (from === w.id) run("space.select", { id: w.id });
         cx.notify();
@@ -444,20 +668,55 @@ export default class Spaces extends View {
         h_flex()
           .gap(8)
           .items_center()
-          .when(Boolean(tree), el => el.pl(22).child(svg("mods/vectron-icons/branch.svg").size(13).text_color(t.dim)))
+          .when(Boolean(tree), (el) =>
+            el.pl(22).child(svg("mods/vectron-icons/branch.svg").size(13).text_color(t.dim)),
+          )
           // The number badge sits centered on both lines (below); this keeps its place in the first.
-          .when(!tree, el => el.child(div().w(16).flex_none()))
-          .child(div().flex_shrink(0).max_w(room() * 7).truncate().text_color(t.foreground).child(w.name))
+          .when(!tree, (el) => el.child(div().w(16).flex_none()))
+          .child(
+            div()
+              .flex_shrink(0)
+              .max_w(room() * 7)
+              .truncate()
+              .text_color(t.foreground)
+              .child(w.name),
+          )
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1())
           // A space with an agent working, blocked, or done gets a square in that status color.
-          .when(!tree && ["working", "blocked", "done"].includes(w.status), el => el.child(div().size(6).flex_none().ml(6).bg(tone(t, w.status)))),
+          .when(!tree && ["working", "blocked", "done"].includes(w.status), (el) =>
+            el.child(div().size(6).flex_none().ml(6).bg(tone(t, w.status))),
+          ),
       )
-      .when(!tree, el => el.child(div().pl(24).min_w(0).truncate().text_size(11).line_height("13px").text_color(t.dim)
-        .child(subtitle(t, this.agentCounts?.get(w.id), w.tabs.length)))
-        .child(h_flex().absolute().left(8).top((rowHeight({ tree }) - 18) / 2).size(16).rounded(0).items_center().justify_center().text_size(10.5).line_height("16px").pl(2).font_bold()
-          .when(on, el => el.bg(t.accent).text_color(t.accent_foreground))
-          .when(!on, el => el.border(1).border_color(t.border).text_color(t.dim))
-          .child(String(i + 1))));
+      .when(!tree, (el) =>
+        el
+          .child(
+            div()
+              .pl(24)
+              .min_w(0)
+              .truncate()
+              .text_size(11)
+              .line_height("13px")
+              .text_color(t.dim)
+              .child(subtitle(t, this.agentCounts?.get(w.id), w.tabs.length)),
+          )
+          .child(
+            h_flex()
+              .absolute()
+              .left(8)
+              .top((rowHeight({ tree }) - 18) / 2)
+              .size(16)
+              .rounded(0)
+              .items_center()
+              .justify_center()
+              .text_size(10.5)
+              .line_height("16px")
+              .pl(2)
+              .font_bold()
+              .when(on, (el) => el.bg(t.accent).text_color(t.accent_foreground))
+              .when(!on, (el) => el.border(1).border_color(t.border).text_color(t.dim))
+              .child(String(i + 1)),
+          ),
+      );
   }
 
   // The 44px rail: a square badge like the wide row's, status as a corner square.
@@ -478,13 +737,34 @@ export default class Spaces extends View {
       .font_bold()
       .tooltip(w.name)
       .when(on, (el) => el.bg(t.accent).border_color(t.accent).text_color(t.accent_foreground))
-      .when(!on, (el) => el.border_color(t.border).text_color(t.muted).hover((s) => s.bg(t.foreground + "14").border_color(t.foreground + "40").text_color(t.foreground)))
+      .when(!on, (el) =>
+        el
+          .border_color(t.border)
+          .text_color(t.muted)
+          .hover((s) =>
+            s
+              .bg(t.foreground + "14")
+              .border_color(t.foreground + "40")
+              .text_color(t.foreground),
+          ),
+      )
       .when(this.keyOn && this.cursor === w.id, (el) => el.border_color(glow(t)))
       .on_click(() => run("space.select", { id: w.id }))
       .on_mouse_down("right", () => this.menu(w))
       .child(String(i + 1))
-      .when(["working", "blocked", "done"].includes(w.status), (el) => el.child(div().absolute().top(2).right(2).size(5).bg(on ? t.accent_foreground : tone(t, w.status))
-        .when(w.status === "working", (d) => d.loop("opacity", { from: 0.35, to: 1, period: 1200 }))));
+      .when(["working", "blocked", "done"].includes(w.status), (el) =>
+        el.child(
+          div()
+            .absolute()
+            .top(2)
+            .right(2)
+            .size(5)
+            .bg(on ? t.accent_foreground : tone(t, w.status))
+            .when(w.status === "working", (d) =>
+              d.loop("opacity", { from: 0.35, to: 1, period: 1200 }),
+            ),
+        ),
+      );
   }
 
   // A keynav move while this list is the active field.
@@ -492,7 +772,10 @@ export default class Spaces extends View {
     if (!m || !isActive(this.key)) return;
     const ids = spaces().map((s) => s.id);
     if (m === "down" || m === "up") this.cursor = step(ids, this.cursor, m === "down" ? 1 : -1);
-    else if ((m === "open" || m === "right") && this.cursor) { run("space.select", { id: this.cursor }); keepKeys(); }
+    else if ((m === "open" || m === "right") && this.cursor) {
+      run("space.select", { id: this.cursor });
+      keepKeys();
+    }
   }
 
   render(cx) {
@@ -504,14 +787,19 @@ export default class Spaces extends View {
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
     const sp = spaces();
-    this.inputGlow.selection(cx, this.keyOn ? this.cursor : sp.find((space) => space.active)?.id ?? null);
-    const ids = new Set(sp.map(p => p.id));
-    const kept = Object.fromEntries(Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)));
+    this.inputGlow.selection(
+      cx,
+      this.keyOn ? this.cursor : (sp.find((space) => space.active)?.id ?? null),
+    );
+    const ids = new Set(sp.map((p) => p.id));
+    const kept = Object.fromEntries(
+      Object.entries(shared("space.colors") ?? {}).filter(([id]) => ids.has(id)),
+    );
     let changed = Object.keys(kept).length !== Object.keys(shared("space.colors") ?? {}).length;
     for (const p of sp) {
       if (kept[p.id] || p.name === "~") continue;
-      const uses = c => Object.values(kept).filter(v => v === c).length;
-      kept[p.id] = palette.reduce((best, c) => uses(c) < uses(best) ? c : best);
+      const uses = (c) => Object.values(kept).filter((v) => v === c).length;
+      kept[p.id] = palette.reduce((best, c) => (uses(c) < uses(best) ? c : best));
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
@@ -523,14 +811,63 @@ export default class Spaces extends View {
       c[s] = (c[s] ?? 0) + 1;
       this.agentCounts.set(a.space, c);
     }
-    return v_flex().relative().size_full().min_h(0).bg(t.chrome).pt(10).text_size(12)
-      .child(h_flex().h(26).flex_none().when(collapsed, el => el.justify_center()).when(!collapsed, el => el.pl(18).pr(10).justify_between()).items_center().text_size(11).text_color(t.dim)
-        .when(!collapsed, el => el.child(div().font_medium().text_color(t.foreground).child(`SPACES [${sp.length}]`)))
-        .child(div().id("space-new").size(22).flex_none().flex().items_center().justify_center().rounded(0).border(1).border_color(t.foreground + "00").hover(s => s.bg(t.foreground + "14").border_color(t.foreground + "40").text_color(t.foreground))
-          .on_click(() => run("space.new")).child(svg("mods/vectron-icons/plus.svg").size(14))))
-      .child(v_flex().flex_1().min_h(0).px(collapsed ? 0 : 10).pt(6).pb(10).gap(collapsed ? 6 : 2).when(collapsed, el => el.items_center()).overflow_y_scrollbar().mode("always")
-        .on_mouse_up("left", (_e, cx) => { this.pressed = null; cx.notify(); })
-        .children(this.grouped(t, collapsed)))
+    return v_flex()
+      .relative()
+      .size_full()
+      .min_h(0)
+      .bg(t.chrome)
+      .pt(10)
+      .text_size(12)
+      .child(
+        h_flex()
+          .h(26)
+          .flex_none()
+          .when(collapsed, (el) => el.justify_center())
+          .when(!collapsed, (el) => el.pl(18).pr(10).justify_between())
+          .items_center()
+          .text_size(11)
+          .text_color(t.dim)
+          .when(!collapsed, (el) =>
+            el.child(div().font_medium().text_color(t.foreground).child(`SPACES [${sp.length}]`)),
+          )
+          .child(
+            div()
+              .id("space-new")
+              .size(22)
+              .flex_none()
+              .flex()
+              .items_center()
+              .justify_center()
+              .rounded(0)
+              .border(1)
+              .border_color(t.foreground + "00")
+              .hover((s) =>
+                s
+                  .bg(t.foreground + "14")
+                  .border_color(t.foreground + "40")
+                  .text_color(t.foreground),
+              )
+              .on_click(() => run("space.new"))
+              .child(svg("mods/vectron-icons/plus.svg").size(14)),
+          ),
+      )
+      .child(
+        v_flex()
+          .flex_1()
+          .min_h(0)
+          .px(collapsed ? 0 : 10)
+          .pt(6)
+          .pb(10)
+          .gap(collapsed ? 6 : 2)
+          .when(collapsed, (el) => el.items_center())
+          .overflow_y_scrollbar()
+          .mode("always")
+          .on_mouse_up("left", (_e, cx) => {
+            this.pressed = null;
+            cx.notify();
+          })
+          .children(this.grouped(t, collapsed)),
+      )
       .when(this.keyOn, (el) => el.child(frame(t)));
   }
 }

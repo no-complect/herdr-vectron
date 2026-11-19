@@ -7,7 +7,8 @@ import { menuFor } from "./git.js";
 import { perform, openDialog, showChanges } from "./act.js";
 
 // A glyph of this mod, or another mod's icon by its path (Herdr's own Changes icon).
-export const icon = (name) => (name.includes("/") ? name : `mods/vectron-changes/graph/icons/${name}.svg`);
+export const icon = (name) =>
+  name.includes("/") ? name : `mods/vectron-changes/graph/icons/${name}.svg`;
 
 export class Menu {
   init(cx) {
@@ -19,7 +20,8 @@ export class Menu {
   }
 
   choose(i, cx) {
-    const it = this.items[i], { overlay, ctx } = props();
+    const it = this.items[i],
+      { overlay, ctx } = props();
     if (!it || it.separator || this.busy) return;
     const a = it.action;
     if (a.type === "newTab") {
@@ -41,7 +43,11 @@ export class Menu {
     } else {
       // Runs here, then closes: a closed popup's tasks would be cancelled.
       this.busy = i;
-      cx.spawn(async (cx) => { await perform(a, {}, ctx); closeOverlay(overlay); cx.notify(); });
+      cx.spawn(async (cx) => {
+        await perform(a, {}, ctx);
+        closeOverlay(overlay);
+        cx.notify();
+      });
     }
     cx.notify();
   }
@@ -50,30 +56,67 @@ export class Menu {
     const n = this.items.length;
     for (let k = 1; k <= n; k++) {
       const i = (this.at + step * k + n * 2) % n;
-      if (!this.items[i].separator) { this.at = i; return; }
+      if (!this.items[i].separator) {
+        this.at = i;
+        return;
+      }
     }
   }
 
   render(cx) {
     const t = theme();
-    return v_flex().id("git-graph-menu").track_focus(this.handle).w_full().min_h(0).p(5).bg(t.popover).text_size(12.8)
+    return v_flex()
+      .id("git-graph-menu")
+      .track_focus(this.handle)
+      .w_full()
+      .min_h(0)
+      .p(5)
+      .bg(t.popover)
+      .text_size(12.8)
       .on_key_down((e, cx) => {
         if (e.key === "down") this.move(1);
         else if (e.key === "up") this.move(-1);
         else if (e.key === "enter") this.choose(this.at, cx);
-        else if ((e.key === "escape" || (e.key === "[" && e.modifiers?.control))) closeOverlay(props().overlay);
+        else if (e.key === "escape" || (e.key === "[" && e.modifiers?.control))
+          closeOverlay(props().overlay);
         else return;
         cx.stop_propagation();
         cx.notify();
       })
-      .children(this.items.map((it, i) => it.separator
-        ? div().mx(7).my(4).h(1).flex_none().bg(t.border)
-        : h_flex().id(`gm-${i}`).h(30).flex_none().px(8).gap(9).rounded(0).items_center().cursor_pointer()
-          .text_color(it.action.type.startsWith("delete") ? t.ansi1 : t.foreground)
-          .when(i === this.at || this.busy === i, (el) => el.bg(t.selected)).hover((s) => s.bg(t.hover))
-          .on_click((_e, cx) => this.choose(i, cx))
-          // An agent's own icon keeps its colors when it isn't drawn tinted.
-          .child(it.image ? image(it.icon).size(14).flex_none() : svg(icon(it.icon)).size(14).flex_none().text_color(it.action.type.startsWith("delete") ? t.ansi1 : t.muted))
-          .child(div().flex_1().min_w(0).truncate().child(this.busy === i ? "Working…" : it.label))));
+      .children(
+        this.items.map((it, i) =>
+          it.separator
+            ? div().mx(7).my(4).h(1).flex_none().bg(t.border)
+            : h_flex()
+                .id(`gm-${i}`)
+                .h(30)
+                .flex_none()
+                .px(8)
+                .gap(9)
+                .rounded(0)
+                .items_center()
+                .cursor_pointer()
+                .text_color(it.action.type.startsWith("delete") ? t.ansi1 : t.foreground)
+                .when(i === this.at || this.busy === i, (el) => el.bg(t.selected))
+                .hover((s) => s.bg(t.hover))
+                .on_click((_e, cx) => this.choose(i, cx))
+                // An agent's own icon keeps its colors when it isn't drawn tinted.
+                .child(
+                  it.image
+                    ? image(it.icon).size(14).flex_none()
+                    : svg(icon(it.icon))
+                        .size(14)
+                        .flex_none()
+                        .text_color(it.action.type.startsWith("delete") ? t.ansi1 : t.muted),
+                )
+                .child(
+                  div()
+                    .flex_1()
+                    .min_w(0)
+                    .truncate()
+                    .child(this.busy === i ? "Working…" : it.label),
+                ),
+        ),
+      );
   }
 }

@@ -1,6 +1,3 @@
-// Everything the manager does to files, with no dependency on the Herdr runtime: the view passes
-// `io` (exec, readText, writeText) so the same code runs under `node --test` against real git.
-
 export const MARKET_TOPIC = "herdr-mod";
 
 // A package is any folder of a repo that holds `mods/<name>/main.js`: the repo root, or one
@@ -18,7 +15,9 @@ export function findPackages(files) {
     const base = pkg.prefix ? `${pkg.prefix}/` : "";
     pkg.mods.sort();
     pkg.files = files.filter((f) => pkg.mods.some((name) => f.startsWith(`${base}mods/${name}/`)));
-    pkg.layouts = files.filter((f) => f.startsWith(`${base}layouts/`) && !f.slice(base.length + 8).includes("/"));
+    pkg.layouts = files.filter(
+      (f) => f.startsWith(`${base}layouts/`) && !f.slice(base.length + 8).includes("/"),
+    );
     pkg.recipe = files.includes(`${base}RECIPE.md`);
     pkg.preview = files.includes(`${base}preview.png`);
     pkg.keys = files.includes(`${base}keys.json`);
@@ -27,8 +26,7 @@ export function findPackages(files) {
   return [...byPrefix.values()].sort((a, b) => a.prefix.localeCompare(b.prefix));
 }
 
-// What AGENTS.md asks to tell the person before adding a mod: whether it runs programs, reaches
-// the network or touches files. A pattern match on the source, so it can only over-report.
+// Surface common side effects for the install preview. Patterns can miss indirect calls.
 const RISKS = [
   ["runs programs", /\bexec\s*\(|\bhc\s*\(|process\.run/],
   ["reaches the network", /\bfetch\s*\(|WebSocket/],
@@ -91,21 +89,30 @@ function parseKeys(text) {
 // What installing `pkg` would do, without doing it. `record` is the earlier install of the same
 // package (an update): its own mods and layouts are replaced, anything else with the same name is
 // a clash and blocks the install, as AGENTS.md never overwrites.
-export async function planInstall(io, { appHome, dir, pkg, record, existingMods, existingLayouts }) {
+export async function planInstall(
+  io,
+  { appHome, dir, pkg, record, existingMods, existingLayouts },
+) {
   const base = pkg.prefix ? `${dir}/${pkg.prefix}` : dir;
   const ownMods = new Set(record?.mods ?? []);
   const ownLayouts = new Set(record?.layouts ?? []);
   const layouts = pkg.layouts.map((f) => f.split("/").at(-1));
   const clashes = [
     ...pkg.mods.filter((m) => existingMods.includes(m) && !ownMods.has(m)).map((m) => `mods/${m}`),
-    ...layouts.filter((l) => existingLayouts.includes(l) && !ownLayouts.has(l)).map((l) => `layouts/${l}`),
+    ...layouts
+      .filter((l) => existingLayouts.includes(l) && !ownLayouts.has(l))
+      .map((l) => `layouts/${l}`),
   ];
+
   const theirs = pkg.keys ? parseKeys(await io.readText(`${base}/keys.json`)) : {};
   const mine = parseKeys(await io.readText(`${appHome}/keys.json`));
   // A key the package added earlier and the person left alone is the package's to change.
-  const ownKeys = new Map((record?.keys ?? []).map((k) => [`${k.section}\u0000${k.key}`, k.action]));
+  const ownKeys = new Map(
+    (record?.keys ?? []).map((k) => [`${k.section}\u0000${k.key}`, k.action]),
+  );
   const keyAdds = [];
   const keyConflicts = [];
+
   for (const [section, entries] of Object.entries(theirs)) {
     for (const [key, action] of Object.entries(entries ?? {})) {
       const current = mine[section]?.[key];
@@ -117,7 +124,16 @@ export async function planInstall(io, { appHome, dir, pkg, record, existingMods,
       }
     }
   }
-  return { base, mods: pkg.mods, layouts, clashes, keyAdds, keyConflicts, risks: scanRisks(await readSources(io, dir, pkg)) };
+
+  return {
+    base,
+    mods: pkg.mods,
+    layouts,
+    clashes,
+    keyAdds,
+    keyConflicts,
+    risks: scanRisks(await readSources(io, dir, pkg)),
+  };
 }
 
 async function writeKeys(io, appHome, change) {
@@ -134,17 +150,30 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   for (const m of record?.mods ?? []) await run(io, "rm", ["-rf", `${appHome}/mods/${m}`]);
   for (const l of record?.layouts ?? []) await run(io, "rm", ["-f", `${appHome}/layouts/${l}`]);
   await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`]);
-  for (const m of plan.mods) await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, `${appHome}/mods/${m}`]);
-  for (const l of plan.layouts) await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
-  const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
+  for (const m of plan.mods)
+    await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, `${appHome}/mods/${m}`]);
+  for (const l of plan.layouts)
+    await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
+  const keys = [
+    ...(record?.keys ?? []).filter(
+      (k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key),
+    ),
+    ...plan.keyAdds,
+  ];
   if (plan.keyAdds.length) {
     await writeKeys(io, appHome, (all) => {
       for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
     });
   }
   return {
-    source, prefix, sha, mods: plan.mods, layouts: plan.layouts, keys: dedupeKeys(keys),
-    risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
+    source,
+    prefix,
+    sha,
+    mods: plan.mods,
+    layouts: plan.layouts,
+    keys: dedupeKeys(keys),
+    risks: plan.risks.map((r) => r.label),
+    at: new Date().toISOString(),
   };
 }
 
@@ -185,9 +214,25 @@ export async function removeLocal(io, { appHome, name, symlink }) {
 // The person's mods folder: Herdr's own (listed in installed.json), the manager's and the rest.
 export async function listMods(io, { appHome, records }) {
   const shipped = Object.keys(parseKeys(await io.readText(`${appHome}/installed.json`)));
-  const out = await run(io, "find", [`${appHome}/mods`, "-mindepth", "1", "-maxdepth", "1", "(", "-type", "d", "-o", "-type", "l", ")"]);
+  const out = await run(io, "find", [
+    `${appHome}/mods`,
+    "-mindepth",
+    "1",
+    "-maxdepth",
+    "1",
+    "(",
+    "-type",
+    "d",
+    "-o",
+    "-type",
+    "l",
+    ")",
+  ]);
   const links = new Set(
-    (await run(io, "find", [`${appHome}/mods`, "-mindepth", "1", "-maxdepth", "1", "-type", "l"])).split("\n").filter(Boolean).map((p) => p.split("/").at(-1)),
+    (await run(io, "find", [`${appHome}/mods`, "-mindepth", "1", "-maxdepth", "1", "-type", "l"]))
+      .split("\n")
+      .filter(Boolean)
+      .map((p) => p.split("/").at(-1)),
   );
   const owner = new Map();
   for (const r of records) for (const m of r.mods) owner.set(m, r);
@@ -208,7 +253,11 @@ export async function listMods(io, { appHome, records }) {
 
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
 // (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
-export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {
+export async function searchMarket(
+  io,
+  { query = "", sort = "stars", page = 1, perPage = 50 },
+  anonymous,
+) {
   const q = `topic:${MARKET_TOPIC}${query.trim() ? ` ${query.trim()}` : ""}`;
   const params = { q, sort, order: "desc", per_page: String(perPage), page: String(page) };
   let body = null;
@@ -226,7 +275,13 @@ export async function searchMarket(io, { query = "", sort = "stars", page = 1, p
     const url = `https://api.github.com/search/repositories?${new URLSearchParams(params)}`;
     const res = await anonymous(url);
     if (res.status !== 200) {
-      const msg = (() => { try { return JSON.parse(res.text).message; } catch { return res.text.slice(0, 120); } })();
+      const msg = (() => {
+        try {
+          return JSON.parse(res.text).message;
+        } catch {
+          return res.text.slice(0, 120);
+        }
+      })();
       throw new Error(`GitHub answered ${res.status}: ${msg}${ghError ? ` (gh: ${ghError})` : ""}`);
     }
     body = JSON.parse(res.text);

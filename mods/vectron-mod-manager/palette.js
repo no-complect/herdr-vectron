@@ -31,9 +31,21 @@ export function palette(t) {
   const on = [t.popover, t.selected, t.raised];
   const text = (c) => readable(c, t.foreground, on);
   return {
-    bg: t.popover, card: t.raised, sel: t.selected, hover: t.hover, border: t.border, input: t.input, bar: t.accent,
-    fg: t.foreground, muted: text(t.muted), dim: text(t.dim), accent: text(t.accent),
-    ok: text(t.done), warn: text(t.blocked), busy: text(t.working),
-    solid: t.solid, solidFg: readable(t.solid_foreground, t.background, [t.solid]),
+    bg: t.popover,
+    card: t.raised,
+    sel: t.selected,
+    hover: t.hover,
+    border: t.border,
+    input: t.input,
+    bar: t.accent,
+    fg: t.foreground,
+    muted: text(t.muted),
+    dim: text(t.dim),
+    accent: text(t.accent),
+    ok: text(t.done),
+    warn: text(t.blocked),
+    busy: text(t.working),
+    solid: t.solid,
+    solidFg: readable(t.solid_foreground, t.background, [t.solid]),
   };
 }

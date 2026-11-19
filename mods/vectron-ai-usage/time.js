@@ -1,4 +1,5 @@
-export const H = 3600e3, DAY = 24 * H;
+export const H = 3600e3,
+  DAY = 24 * H;
 
 export function pace(w) {
   const end = Date.parse(w.resets_at);
@@ -8,7 +9,8 @@ export function pace(w) {
 
 // 12-hour time: "2:05 PM", "12:00 AM".
 export function clock(ms) {
-  const d = new Date(ms), h = d.getHours();
+  const d = new Date(ms),
+    h = d.getHours();
   return `${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }
 
@@ -20,10 +22,12 @@ export function resets(w) {
   if (!end) return "";
   const left = Math.max(0, end - Date.now());
   if (left < DAY) {
-    const h = Math.floor(left / H), m = Math.round((left % H) / 60e3);
+    const h = Math.floor(left / H),
+      m = Math.round((left % H) / 60e3);
     return `resets in ${h ? `${h}h ` : ""}${m}m, at ${clock(end)}`;
   }
-  if (w.monthly) return `resets ${new Date(end).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+  if (w.monthly)
+    return `resets ${new Date(end).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
   return `resets ${DAYS[new Date(end).getDay()]} at ${clock(end)}`;
 }
 

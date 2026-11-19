@@ -16,16 +16,25 @@ const glyphs = new Map([
 export function programIcon(program, size, color, pulse = null) {
   const glyph = glyphs.get(program?.key);
   if (glyph) {
-    const draw = (tint) => svg(`mods/vectron-icons/${glyph}.svg`).size(size).flex_none().text_color(tint);
+    const draw = (tint) =>
+      svg(`mods/vectron-icons/${glyph}.svg`).size(size).flex_none().text_color(tint);
     const base = draw(color);
     if (!pulse) return base;
 
-    return div().relative().size(size).flex_none()
+    return div()
+      .relative()
+      .size(size)
+      .flex_none()
       .child(base)
-      .child(div().id(`${pulse.id}-glyph-${program.key}`).absolute().inset_0()
-        .opacity(pulse.opacity)
-        .transition("opacity", { duration: pulse.duration, easing: "ease-out" })
-        .child(draw(pulse.color)));
+      .child(
+        div()
+          .id(`${pulse.id}-glyph-${program.key}`)
+          .absolute()
+          .inset_0()
+          .opacity(pulse.opacity)
+          .transition("opacity", { duration: pulse.duration, easing: "ease-out" })
+          .child(draw(pulse.color)),
+      );
   }
   if (!program?.icon) return null;
 

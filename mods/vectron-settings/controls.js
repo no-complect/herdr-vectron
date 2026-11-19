@@ -4,7 +4,13 @@ import { v_flex, h_flex } from "gpui-base";
 // Pieces ---------------------------------------------------------------
 
 export function heading(t, text) {
-  return div().pt(6).pb(8).text_size(12).font_semibold().text_color(t.dim).child(text.toUpperCase());
+  return div()
+    .pt(6)
+    .pb(8)
+    .text_size(12)
+    .font_semibold()
+    .text_color(t.dim)
+    .child(text.toUpperCase());
 }
 
 // One setting: what it is on the left, the control on the right.
@@ -22,7 +28,9 @@ export function row(t, title, about, control) {
         .min_w(0)
         .gap(3)
         .child(div().text_size(14).text_color(t.foreground).child(title))
-        .when(Boolean(about), (el) => el.child(div().text_size(12.5).line_height("18px").text_color(t.dim).child(about))),
+        .when(Boolean(about), (el) =>
+          el.child(div().text_size(12.5).line_height("18px").text_color(t.dim).child(about)),
+        ),
     )
     .child(div().flex_none().child(control));
 }
@@ -84,5 +92,11 @@ export function toggle(t, id, on, onClick) {
     .flex()
     .when(on, (el) => el.justify_end())
     .on_click(onClick)
-    .child(div().w(16).h(16).rounded(0).bg(on ? t.accent_foreground : t.muted));
+    .child(
+      div()
+        .w(16)
+        .h(16)
+        .rounded(0)
+        .bg(on ? t.accent_foreground : t.muted),
+    );
 }

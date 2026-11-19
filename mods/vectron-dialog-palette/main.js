@@ -8,7 +8,18 @@ import { InputGlow } from "./input-glow.js";
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
-import { commands, layouts, keys, run, theme, props, closeOverlay, openOverlay, shared, window as win } from "herdr";
+import {
+  commands,
+  layouts,
+  keys,
+  run,
+  theme,
+  props,
+  closeOverlay,
+  openOverlay,
+  shared,
+  window as win,
+} from "herdr";
 import { lookFor, openMod } from "./opens.js";
 
 // The list keeps one height while you move: rows and group titles have fixed
@@ -33,8 +44,20 @@ const NAMED = [
   ["pane.split", { direction: "down" }, "Pane", "Split down", "horizontal"],
   ["pane.close", {}, "Pane", "Close pane", "kill"],
   ["pane.zoom", {}, "Pane", "Zoom pane", "maximize fullscreen"],
-  ...["left", "right", "up", "down"].map((d) => ["pane.go", { direction: d }, "Pane", `Focus pane ${d}`, "move go"]),
-  ...["left", "right", "up", "down"].map((d) => ["pane.swap", { direction: d }, "Pane", `Swap pane ${d}`, "move"]),
+  ...["left", "right", "up", "down"].map((d) => [
+    "pane.go",
+    { direction: d },
+    "Pane",
+    `Focus pane ${d}`,
+    "move go",
+  ]),
+  ...["left", "right", "up", "down"].map((d) => [
+    "pane.swap",
+    { direction: d },
+    "Pane",
+    `Swap pane ${d}`,
+    "move",
+  ]),
   ["space.new", {}, "Space", "New space", "workspace"],
   ["space.rename", {}, "Space", "Rename space", "workspace"],
   ["space.close", {}, "Space", "Close space", "workspace kill"],
@@ -61,21 +84,51 @@ const NAMED = [
   ["app.zoom_out", {}, "App", "Zoom out", "smaller font size"],
   ["app.zoom_reset", {}, "App", "Reset zoom", "font size"],
   ["app.quit", {}, "App", "Quit Herdr", "exit"],
-  ...["graphite", "ink", "moss", "atom-one-dark"].map((n) => ["app.theme", { name: n }, "App", `Theme: ${n.replace(/-/g, " ")}`, "colors look"]),
+  ...["graphite", "ink", "moss", "atom-one-dark"].map((n) => [
+    "app.theme",
+    { name: n },
+    "App",
+    `Theme: ${n.replace(/-/g, " ")}`,
+    "colors look",
+  ]),
 ];
 
 // Commands that act on something you point at (ids, terminals): not for a list.
 const HIDDEN = new Set([
-  "space.move", "tab.move", "space.select", "tab.select", "pane.focus", "terminal.keep",
-  "terminal.park", "terminal.kill", "terminal.show", "agent.focus", "layout.set", "layout.toggle",
-  "layout.show", "layout.hide", "layout.resize", "layout.select", "mod.open", "overlay.close",
-  "tab.settle", "tab.unsettle",
-  "app.palette", "app.hide", "app.hide_others", "app.show_all", "app.theme", "app.settings",
+  "space.move",
+  "tab.move",
+  "space.select",
+  "tab.select",
+  "pane.focus",
+  "terminal.keep",
+  "terminal.park",
+  "terminal.kill",
+  "terminal.show",
+  "agent.focus",
+  "layout.set",
+  "layout.toggle",
+  "layout.show",
+  "layout.hide",
+  "layout.resize",
+  "layout.select",
+  "mod.open",
+  "overlay.close",
+  "tab.settle",
+  "tab.unsettle",
+  "app.palette",
+  "app.hide",
+  "app.hide_others",
+  "app.show_all",
+  "app.theme",
+  "app.settings",
 ]);
 
 function titleOf(name) {
   const [noun, verb] = name.split(".");
-  return { group: noun.charAt(0).toUpperCase() + noun.slice(1), title: `${verb.replace(/_/g, " ")} ${noun}`.replace(/^./, (c) => c.toUpperCase()) };
+  return {
+    group: noun.charAt(0).toUpperCase() + noun.slice(1),
+    title: `${verb.replace(/_/g, " ")} ${noun}`.replace(/^./, (c) => c.toUpperCase()),
+  };
 }
 
 // Every entry for the state we're in now.
@@ -86,13 +139,26 @@ function entries() {
     .filter(([n]) => !(mac && n.startsWith("window.")))
     .map(([name, args, group, title, words]) => ({ name, args, group, title, words }));
   for (const l of layouts()) {
-    const t = { main: "Herdr", terminals: "Terminals", win98: "Herdr 98" }[l] ?? l.charAt(0).toUpperCase() + l.slice(1);
-    list.push({ name: "layout.switch", args: { name: l }, group: "Layout", title: `Layout: ${t}`, words: `look ${l}` });
+    const t =
+      { main: "Herdr", terminals: "Terminals", win98: "Herdr 98" }[l] ??
+      l.charAt(0).toUpperCase() + l.slice(1);
+    list.push({
+      name: "layout.switch",
+      args: { name: l },
+      group: "Layout",
+      title: `Layout: ${t}`,
+      words: `look ${l}`,
+    });
   }
   // Anything new in the app shows up too, until it gets a better name here.
   const named = new Set(NAMED.map(([n]) => n));
   for (const c of commands()) {
-    if (named.has(c.name) || HIDDEN.has(c.name) || c.args.some((a) => a.required && a.name !== "name")) continue;
+    if (
+      named.has(c.name) ||
+      HIDDEN.has(c.name) ||
+      c.args.some((a) => a.required && a.name !== "name")
+    )
+      continue;
     list.push({ name: c.name, args: {}, ...titleOf(c.name), words: c.about });
   }
   return list.map((e) => ({ ...e, id: `${e.name}:${JSON.stringify(e.args)}` }));
@@ -135,7 +201,12 @@ export default class Palette extends View {
     this.inputGlow = new InputGlow();
     this.query = "";
     this.input = InputState.new({ placeholder: "Type a command…" });
-    this.input.on("change", (_e, cx) => { this.inputGlow.typing(cx); this.query = this.input.value(); this.at = 0; cx.notify(); });
+    this.input.on("change", (_e, cx) => {
+      this.inputGlow.typing(cx);
+      this.query = this.input.value();
+      this.at = 0;
+      cx.notify();
+    });
     this.input.on("submit", (_e, cx) => {
       const entry = this.rows()[this.at]?.e;
       if (entry) this.inputGlow.confirm(cx, () => this.go(entry));
@@ -160,10 +231,16 @@ export default class Palette extends View {
     localStorage.setItem("recent", JSON.stringify(this.recent));
     this.close();
     if (e.name === "mod.clone") {
-      openOverlay({ mod: "prompt", kind: "dialog", width: 380, props: {
-        title: "Duplicate mod", hint: "Mod to copy; creates <name>-copy",
-        command: { name: "mod.clone", args: {} },
-      } });
+      openOverlay({
+        mod: "prompt",
+        kind: "dialog",
+        width: 380,
+        props: {
+          title: "Duplicate mod",
+          hint: "Mod to copy; creates <name>-copy",
+          command: { name: "mod.clone", args: {} },
+        },
+      });
     } else if (e.name === "mod.open" && e.args?.name?.startsWith("vectron-")) {
       openMod(e.args.name);
     } else {
@@ -176,10 +253,18 @@ export default class Palette extends View {
     const all = entries();
     const q = this.query.trim().toLowerCase().replace(/\s+/g, "");
     if (!q) {
-      const recent = this.recent.map((id) => all.find((e) => e.id === id)).filter(Boolean).slice(0, 5);
-      const rest = GROUPS.slice(1).flatMap((g) => all.filter((e) => e.group === g && !recent.includes(e)));
+      const recent = this.recent
+        .map((id) => all.find((e) => e.id === id))
+        .filter(Boolean)
+        .slice(0, 5);
+      const rest = GROUPS.slice(1).flatMap((g) =>
+        all.filter((e) => e.group === g && !recent.includes(e)),
+      );
       const others = all.filter((e) => !GROUPS.includes(e.group) && !recent.includes(e));
-      return [...recent.map((e) => ({ e, head: "Recent" })), ...[...rest, ...others].map((e) => ({ e, head: e.group }))];
+      return [
+        ...recent.map((e) => ({ e, head: "Recent" })),
+        ...[...rest, ...others].map((e) => ({ e, head: e.group })),
+      ];
     }
     const rank = (e) => this.recent.indexOf(e.id);
     return all
@@ -190,11 +275,17 @@ export default class Palette extends View {
         return best && { e, score: best.score, hits: best.hits };
       })
       .filter(Boolean)
-      .sort((a, b) => b.score - a.score || (rank(a.e) < 0 ? 99 : rank(a.e)) - (rank(b.e) < 0 ? 99 : rank(b.e)));
+      .sort(
+        (a, b) =>
+          b.score - a.score || (rank(a.e) < 0 ? 99 : rank(a.e)) - (rank(b.e) < 0 ? 99 : rank(b.e)),
+      );
   }
 
   title(t, text, hits, on) {
-    if (!hits?.length) return div().text_color(on ? t.foreground : t.muted).child(text);
+    if (!hits?.length)
+      return div()
+        .text_color(on ? t.foreground : t.muted)
+        .child(text);
     const parts = [];
     let cur = "";
     let lit = false;
@@ -208,7 +299,14 @@ export default class Palette extends View {
       cur += ch;
     });
     if (cur) parts.push([cur, lit]);
-    return h_flex().children(parts.map(([s, h]) => div().text_color(h ? t.accent : on ? t.foreground : t.muted).when(h, (d) => d.font_semibold()).child(s.replace(/ /g, "\u00a0"))));
+    return h_flex().children(
+      parts.map(([s, h]) =>
+        div()
+          .text_color(h ? t.accent : on ? t.foreground : t.muted)
+          .when(h, (d) => d.font_semibold())
+          .child(s.replace(/ /g, "\u00a0")),
+      ),
+    );
   }
 
   render() {
@@ -237,20 +335,49 @@ export default class Palette extends View {
     }
     this.scroll = Math.max(0, Math.min(this.scroll, this.maxScroll));
     const key = (k) =>
-      h_flex().gap(3).children(keyParts(k).map((p) => div().px(5).rounded(0).border_1().border_color(t.border).bg(t.raised).text_size(11).text_color(t.dim).child(p)));
+      h_flex()
+        .gap(3)
+        .children(
+          keyParts(k).map((p) =>
+            div()
+              .px(5)
+              .rounded(0)
+              .border_1()
+              .border_color(t.border)
+              .bg(t.raised)
+              .text_size(11)
+              .text_color(t.dim)
+              .child(p),
+          ),
+        );
     // In a scrolling list each item is placed at its edges from the model
     // above, not stacked: GPUI rounds every height to whole pixels, and a
     // stack of rounded heights drifts away from the model (19 px at zoom 1.3
     // by row 40, cutting the selection off). Edges from the model can't add up.
     const place = (el, start, end) =>
       fixed
-        ? el.absolute().left(0).right(0).top(start - this.scroll).bottom(LIST_H - (end - this.scroll))
+        ? el
+            .absolute()
+            .left(0)
+            .right(0)
+            .top(start - this.scroll)
+            .bottom(LIST_H - (end - this.scroll))
         : el.flex_none().h(end - start);
     const visible = (start, end) => !fixed || (end > this.scroll && start < this.scroll + LIST_H);
     const list = [];
     rows.forEach((r, i) => {
       const { head, title, row } = tops[i];
-      if (head && visible(title, row)) list.push(place(h_flex(), title, row).px(14).pb(4).items_end().text_size(11).font_semibold().text_color(t.dim).child(r.head));
+      if (head && visible(title, row))
+        list.push(
+          place(h_flex(), title, row)
+            .px(14)
+            .pb(4)
+            .items_end()
+            .text_size(11)
+            .font_semibold()
+            .text_color(t.dim)
+            .child(r.head),
+        );
       if (!visible(row, row + ROW_H)) return;
       const on = i === this.at;
       const k = keyOf(r.e, bound);
@@ -267,71 +394,94 @@ export default class Palette extends View {
           .when(on, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
           .on_click((_e, cx) => this.inputGlow.confirm(cx, () => this.go(r.e)))
-          .child(div().flex_1().min_w(0).child(this.title(t, r.e.title, r.hits, on)))
-          .when(Boolean(this.query), (el) => el.child(div().text_size(11.5).text_color(t.dim).child(r.e.group)))
+          .child(
+            div()
+              .flex_1()
+              .min_w(0)
+              .child(this.title(t, r.e.title, r.hits, on)),
+          )
+          .when(Boolean(this.query), (el) =>
+            el.child(div().text_size(11.5).text_color(t.dim).child(r.e.group)),
+          )
           .when(Boolean(k), (el) => el.child(key(k))),
       );
     });
-    return v_flex()
-      .id("palette")
-      .track_focus(this.handle)
-      // As tall as its content: no empty space below a short (filtered) list.
-      .w_full()
-      .min_h(0)
-      .p(18)
-      .gap(10)
-      .bg(t.chrome)
-      // Square frame like the main tiles (mod.json: frame "none").
-      .border_2().border_color(t.border)
-      .on_key_down((e, cx) => {
-        // Vim-style: ctrl-j / ctrl-k move like down / up.
-        const vim = e.modifiers?.control && !e.modifiers.alt && !e.modifiers.shift;
-        const k = vim && e.key === "j" ? "down" : vim && e.key === "k" ? "up" : vim && e.key === "[" ? "escape" : e.key;
-        if (k === "escape") return this.close();
-        // Stops at the ends: wrapping jumps out of sight.
-        const previous = this.at;
-        if (k === "down") this.at = Math.min(this.at + 1, rows.length - 1);
-        else if (k === "up") this.at = Math.max(this.at - 1, 0);
-        else if (k === "pagedown") this.at = Math.min(this.at + SHOWN, rows.length - 1);
-        else if (k === "pageup") this.at = Math.max(this.at - SHOWN, 0);
-        else return;
-        if (this.at !== previous) this.inputGlow.start(cx, "input");
-        cx.stop_propagation();
-        cx.notify();
-      })
-      .child(
-        h_flex().relative()
-          .h(36)
-          .flex_none()
-          .px(10)
-          .gap(10)
-          .items_center()
-          .rounded(0)
-          .border_1()
-          .border_color(t.accent)
-          .bg(t.background)
-          .child(svg("mods/vectron-dialog-palette/command.svg").size(16).text_color(t.dim))
-          .child(this.inputGlow.layer())
-          .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground))
-          .child(div().text_size(11).text_color(t.dim).child("Esc")),
-      )
-      .child(
-        rows.length
-          ? div()
-              .id("palette-rows")
-              .relative()
-              .mb(6)
-              .when(fixed, (el) => el.h(LIST_H).overflow_hidden())
-              .on_scroll_wheel((e, cx) => {
-                // The event bridge converts both wheel and touchpad deltas to pixels.
-                this.scroll = Math.max(0, Math.min(this.scroll - e.delta.y, this.maxScroll));
-                // The selection stays on screen, so the next frame doesn't scroll back to it.
-                while (this.at < rows.length - 1 && tops[this.at].row < this.scroll) this.at++;
-                while (this.at > 0 && tops[this.at].row + ROW_H > this.scroll + LIST_H) this.at--;
-                cx.notify();
-              })
-              .children(fixed ? list : [v_flex().children(list)])
-          : div().px(16).py(14).text_size(13).text_color(t.dim).child(`Nothing matches "${this.query}". Places are in the picker.`),
-      );
+    return (
+      v_flex()
+        .id("palette")
+        .track_focus(this.handle)
+        // As tall as its content: no empty space below a short (filtered) list.
+        .w_full()
+        .min_h(0)
+        .p(18)
+        .gap(10)
+        .bg(t.chrome)
+        // Square frame like the main tiles (mod.json: frame "none").
+        .border_2()
+        .border_color(t.border)
+        .on_key_down((e, cx) => {
+          // Vim-style: ctrl-j / ctrl-k move like down / up.
+          const vim = e.modifiers?.control && !e.modifiers.alt && !e.modifiers.shift;
+          const k =
+            vim && e.key === "j"
+              ? "down"
+              : vim && e.key === "k"
+                ? "up"
+                : vim && e.key === "["
+                  ? "escape"
+                  : e.key;
+          if (k === "escape") return this.close();
+          // Stops at the ends: wrapping jumps out of sight.
+          const previous = this.at;
+          if (k === "down") this.at = Math.min(this.at + 1, rows.length - 1);
+          else if (k === "up") this.at = Math.max(this.at - 1, 0);
+          else if (k === "pagedown") this.at = Math.min(this.at + SHOWN, rows.length - 1);
+          else if (k === "pageup") this.at = Math.max(this.at - SHOWN, 0);
+          else return;
+          if (this.at !== previous) this.inputGlow.start(cx, "input");
+          cx.stop_propagation();
+          cx.notify();
+        })
+        .child(
+          h_flex()
+            .relative()
+            .h(36)
+            .flex_none()
+            .px(10)
+            .gap(10)
+            .items_center()
+            .rounded(0)
+            .border_1()
+            .border_color(t.accent)
+            .bg(t.background)
+            .child(svg("mods/vectron-dialog-palette/command.svg").size(16).text_color(t.dim))
+            .child(this.inputGlow.layer())
+            .child(Input.new(this.input).flex_1().h_full().text_size(12.8).text_color(t.foreground))
+            .child(div().text_size(11).text_color(t.dim).child("Esc")),
+        )
+        .child(
+          rows.length
+            ? div()
+                .id("palette-rows")
+                .relative()
+                .mb(6)
+                .when(fixed, (el) => el.h(LIST_H).overflow_hidden())
+                .on_scroll_wheel((e, cx) => {
+                  // The event bridge converts both wheel and touchpad deltas to pixels.
+                  this.scroll = Math.max(0, Math.min(this.scroll - e.delta.y, this.maxScroll));
+                  // The selection stays on screen, so the next frame doesn't scroll back to it.
+                  while (this.at < rows.length - 1 && tops[this.at].row < this.scroll) this.at++;
+                  while (this.at > 0 && tops[this.at].row + ROW_H > this.scroll + LIST_H) this.at--;
+                  cx.notify();
+                })
+                .children(fixed ? list : [v_flex().children(list)])
+            : div()
+                .px(16)
+                .py(14)
+                .text_size(13)
+                .text_color(t.dim)
+                .child(`Nothing matches "${this.query}". Places are in the picker.`),
+        )
+    );
   }
 }

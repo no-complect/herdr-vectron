@@ -143,20 +143,24 @@ export default class ContextInspector extends View {
     this.pinned = null;
   }
 
+  resetSession(identity) {
+    this.identity = identity;
+    this.dataFlash.burst = null;
+    this.data = null;
+    this.error = null;
+    this.busy = false;
+    this.cutoff = null;
+    this.clearDetail();
+  }
+
   refresh(cx, force = false) {
     if (this.closed) return;
     if (!force && !this.visible()) return;
+
     const target = this.target();
     const identity = this.targetIdentity(target);
-    if (identity !== this.identity) {
-      this.identity = identity;
-      this.dataFlash.burst = null;
-      this.data = null;
-      this.error = null;
-      this.busy = false;
-      this.cutoff = null;
-      this.clearDetail();
-    }
+    if (identity !== this.identity) this.resetSession(identity);
+
     if (this.busy || !target) return;
     if (target.address.includes("/")) {
       this.error = "Context currently reads local sessions only.";
@@ -167,6 +171,7 @@ export default class ContextInspector extends View {
         "Focus a Codex, Claude Code, Grok Build or Antigravity CLI session to inspect it.";
       return;
     }
+
     const request = {
       ...target,
       path: this.manual[target.address],
@@ -177,10 +182,13 @@ export default class ContextInspector extends View {
       try {
         const data = await readSession(request);
         if (this.closed || identity !== this.identity) return;
+
         const previous = this.data;
         this.data = data.unchanged ? { ...this.data, ...data } : data;
         this.error = null;
-        if (!data.unchanged && this.cutoff === null && previous?.path && previous.path === data.path && this.visible()) {
+
+        const sameSession = previous?.path && previous.path === data.path;
+        if (!data.unchanged && this.cutoff === null && sameSession && this.visible()) {
           this.flashUpdatedCounts(cx, previous, this.data);
         }
       } catch (error) {
@@ -261,7 +269,9 @@ export default class ContextInspector extends View {
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => {
         this.lastFlashColor = flashColor(this.lastFlashColor, t);
-        this.controlsFlash.start(cx, new Map([[id, this.lastFlashColor]]), { alreadyRendering: true });
+        this.controlsFlash.start(cx, new Map([[id, this.lastFlashColor]]), {
+          alreadyRendering: true,
+        });
         action(cx);
         cx.notify();
       })
@@ -296,7 +306,8 @@ export default class ContextInspector extends View {
   breathingFill(key, color, period) {
     return div()
       .id("vector-fill-" + key)
-      .absolute().inset_0()
+      .absolute()
+      .inset_0()
       .bg(color)
       .loop("opacity", { from: 0.46, to: 1, period });
   }
@@ -388,8 +399,8 @@ export default class ContextInspector extends View {
   }
 
   breakdown(events, cx) {
-    const t = theme(),
-      { counts, sum } = estimatedTotals(events);
+    const t = theme();
+    const { counts, sum } = estimatedTotals(events);
     const active = categories.filter((c) => counts[c.id]);
     const chip = (c) =>
       this.button(
@@ -445,7 +456,9 @@ export default class ContextInspector extends View {
                 .flex_none()
                 .relative()
                 .bg(c.color + "52")
-                .child(this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)))
+                .child(
+                  this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
+                )
                 .child(this.dataFlash.layer(c.id, "fill"))
                 .cursor_pointer()
                 .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
@@ -575,9 +588,13 @@ export default class ContextInspector extends View {
           .child(div().flex_1())
           .child(div().text_size(10).text_color(t.dim).child(`${shown.length} entries`)),
       )
-      .child(div().relative().w_full()
-        .child(this.inputGlow.layer())
-        .child(Input.new(this.search).w_full().text_size(12)))
+      .child(
+        div()
+          .relative()
+          .w_full()
+          .child(this.inputGlow.layer())
+          .child(Input.new(this.search).w_full().text_size(12)),
+      )
       .child(
         v_flex()
           .relative()
@@ -742,12 +759,14 @@ export default class ContextInspector extends View {
     const next = this.targetIdentity(target);
     const visible = this.visible();
     if (next !== this.identity && visible) this.refresh(cx);
-    const shownTarget = visible ? target?.address ?? "" : null;
+    const shownTarget = visible ? (target?.address ?? "") : null;
     // A hidden stack child might not render until it is selected again.
     const opened = props()?.overlay ? null : shared("vectron.context-open");
     const justOpened = opened && opened.at !== this.lastPanelOpen && Date.now() - opened.at < 750;
     if (shownTarget !== null && (shownTarget !== this.shownTarget || justOpened)) {
-      this.lastPanelFlashColor = justOpened ? opened.color : flashColor(this.lastPanelFlashColor, t);
+      this.lastPanelFlashColor = justOpened
+        ? opened.color
+        : flashColor(this.lastPanelFlashColor, t);
       this.panelFlash.start(cx, new Map([["context-panel", this.lastPanelFlashColor]]), {
         alreadyRendering: true,
       });

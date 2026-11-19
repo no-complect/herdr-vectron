@@ -21,14 +21,14 @@ Vectron brings the glow and playful timing of classic stand-up vector arcades to
 
 ## Built from
 
-- [layouts/vectron.json](layouts/vectron.json) defines the chrome nodes and the terminal pane frame. [themes/vectron.json](themes/vectron.json) supplies the primary theme. Copy the rest of the supplied theme files for the theme picker.
+- [layouts/vectron.json](layouts/vectron.json) defines the chrome nodes and the terminal pane frame. [themes/vectron.json](themes/vectron.json) supplies Vectron's palette for both appearances.
 - The bar, chrome, Spaces, Agents, Tabs, and Pane mods draw the frame and navigation. The two picker and two palette variants retain their popup and dialog sizes. The icon folder provides assets they share.
 - Files, Changes, Context, and Browser Notes implement the side stack. Context invokes its bundled read-only Python reader. The Mods, Settings, Themes, and Keybindings overlays keep the original controls accessible.
-- Copy the entire [mods](mods) directory, including Whistle and the icon folder. The layout uses Herdr’s bundled menu, new-menu, prompt, and stock artwork. Merge [keys.json](keys.json) by section and keep unrelated bindings.
+- Copy the [mod folders](mods) containing a main.js, including Whistle and the icon folder. The layout uses Herdr’s bundled menu, new-menu, prompt, and stock artwork. Merge [keys.json](keys.json) by section and keep unrelated bindings.
 
 ## Watch out
 
-- Install the layout preview under layouts/ with the JSON and the Vectron theme under themes/. The optional theme picker also needs the provided palettes and preview assets.
+- Install the layout preview alongside the layout JSON and copy the Vectron theme into themes/. Themes opens a preview of Vectron and lets you apply it.
 - Context uses Python 3 and local session files. Its fallback lets you choose a session when an exact match is unavailable. The usage panel may read local provider login files and fetch usage from the corresponding provider. Files, Changes, and the Mods screen also run commands or access files as needed. Browser Notes expects the optional Herdr Browser helper.
 - The header pulse uses focus and agent status events available in stock Herdr. This package uses the stock terminal frame.
 - Reopen restores the saved pane arrangement. Matching a prior agent process to its session uses Linux process metadata. On macOS the reopened panes start shells.
