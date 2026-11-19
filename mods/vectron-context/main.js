@@ -104,8 +104,39 @@ export default class ContextInspector extends View {
     return this.lastTarget;
   }
 
-  attachment() {
+  selectedTarget() {
     const target = this.target();
+    const previous = this.selectionTarget;
+    this.selectionTarget = target;
+    if (
+      !target?.session_id ||
+      !previous ||
+      previous.session_id ||
+      !Number.isInteger(target.pid) ||
+      target.pid <= 0 ||
+      target.pid !== previous.pid ||
+      target.address !== previous.address ||
+      target.provider !== previous.provider
+    ) return target;
+
+    const previousKey = sessionKey(previous);
+    const selectedPath = this.manual.get(previousKey);
+    if (!selectedPath) return target;
+
+    // A label identified the same running process. Carry its explicit transcript choice forward.
+    const previousIdentity = this.targetIdentity(previous);
+    const key = sessionKey(target);
+    this.manual.delete(previousKey);
+    if (!this.manual.has(key)) this.manual.set(key, selectedPath);
+    if (this.identity === previousIdentity && this.manual.get(key) === selectedPath) {
+      this.identity = this.targetIdentity(target);
+      this.pendingRead = null;
+    }
+    return target;
+  }
+
+  attachment() {
+    const target = this.selectedTarget();
     return { target, selectedPath: this.manual.get(sessionKey(target)) };
   }
 
@@ -154,7 +185,7 @@ export default class ContextInspector extends View {
     if (this.closed) return;
     if (!force && !this.visible()) return;
 
-    const target = this.target();
+    const target = this.selectedTarget();
     const identity = this.targetIdentity(target);
     if (identity !== this.identity) this.resetSession(identity);
 
@@ -329,6 +360,18 @@ export default class ContextInspector extends View {
 
   gauge(usage) {
     const t = theme();
+    let note = "No model usage sample is recorded yet.";
+    if (usage?.before_retained_history) {
+      note = "Last recorded usage predates the retained history.";
+    } else if (usage?.kind === "context") {
+      note = "Grok's recorded context estimate; an in-flight turn may be ahead.";
+    } else if (usage) {
+      note = "Reported by the last model request; an in-flight turn may be ahead.";
+    } else if (this.replayCutoff != null) {
+      note = "No usage sample is available at this replay point.";
+    } else if (this.data?.partial_history) {
+      note = "No usage sample was found within the read limit.";
+    }
     const percent = usage?.window ? (usage.input / usage.window) * 100 : null;
     const barColor = this.usageBarColor(usage);
     const color = percent !== null && percent >= 75 ? barColor : t.accent;
@@ -403,13 +446,7 @@ export default class ContextInspector extends View {
         div()
           .text_size(10)
           .text_color(t.dim)
-          .child(
-            usage
-              ? usage.kind === "context"
-                ? "Grok's recorded context estimate; an in-flight turn may be ahead."
-                : "Reported by the last model request; an in-flight turn may be ahead."
-              : "No model usage sample is recorded yet.",
-          ),
+          .child(note),
       );
   }
 
@@ -509,7 +546,7 @@ export default class ContextInspector extends View {
       )
       .child(
         this.button("context-follow", "Follow focused session automatically", (cx) => {
-          const target = this.target();
+          const target = this.selectedTarget();
           if (target) this.manual.delete(sessionKey(target));
           this.picker = false;
           this.refresh(cx, true);
@@ -530,7 +567,7 @@ export default class ContextInspector extends View {
                 .cursor_pointer()
                 .hover((s) => s.bg(t.hover))
                 .on_click((_e, cx) => {
-                  const target = this.target();
+                  const target = this.selectedTarget();
                   if (target) this.manual.set(sessionKey(target), candidate.path);
                   this.picker = false;
                   this.refresh(cx, true);

@@ -155,21 +155,43 @@ async function pathExists(io, path) {
   throw new Error(`Could not check whether ${path} exists.`);
 }
 
+async function finishInstall(io, lock, staging) {
+  const warnings = [];
+  try {
+    if (staging) await run(io, "rm", ["-rf", staging]);
+  } catch (error) {
+    warnings.push(`Could not remove staging files at ${staging}. ${error.message}`);
+  }
+  try {
+    await run(io, "rmdir", [lock]);
+  } catch (error) {
+    warnings.push(`Could not release the install lock at ${lock}. ${error.message}`);
+  }
+  if (warnings.length) io.warn?.(warnings.join("\n"));
+}
+
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
   if (plan.clashes.length) throw new Error(`already exists: ${plan.clashes.join(", ")}`);
 
-  // One installer at a time. Keep the staging directory on the config filesystem
-  // so each replacement and backup can be moved without copying it a second time.
-  const staging = `${appHome}/.mod-manager-install`;
-  const incoming = `${staging}/incoming`;
-  const backup = `${staging}/backup`;
+  const lock = `${appHome}/.mod-manager-install.lock`;
   const previousFiles = new Set(packagePaths(record ?? {}));
   const incomingFiles = new Set(packagePaths(plan));
   const changes = [];
+  let staging;
+  let backup;
   let keepBackups = false;
 
-  await run(io, "mkdir", [staging]);
   try {
+    await run(io, "mkdir", [lock]);
+  } catch (error) {
+    throw new Error(`Could not acquire the install lock at ${lock}. ${error.message}`);
+  }
+  try {
+    // Keep moves on the config filesystem. Staging cleanup and unlocking are independent.
+    staging = (await run(io, "mktemp", ["-d", `${appHome}/.mod-manager-install.XXXXXX`])).trim();
+    if (!staging) throw new Error("Could not create the install staging directory.");
+    const incoming = `${staging}/incoming`;
+    backup = `${staging}/backup`;
     await run(io, "mkdir", [
       "-p",
       ...[incoming, backup, appHome].flatMap((dir) => [`${dir}/mods`, `${dir}/layouts`]),
@@ -223,11 +245,14 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
         keepBackups = true;
       }
     }
-    if (keepBackups)
-      throw new Error(`${error.message}\nRollback was incomplete. Backups are in ${backup}.`);
+    if (keepBackups) {
+      throw new Error(
+        `${error.message}\nRollback was incomplete. Backups are in ${backup}; the install lock remains at ${lock}.`,
+      );
+    }
     throw error;
   } finally {
-    if (!keepBackups) await io.exec("rm", ["-rf", staging]).catch(() => null);
+    if (!keepBackups) await finishInstall(io, lock, staging);
   }
 
   const keys = [

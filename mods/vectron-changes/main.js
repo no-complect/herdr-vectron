@@ -1,7 +1,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { fileAppearance, gitStatus, statusColor } from "./appearance.js";
 import GitGraph from "./graph/main.js";
-import { unmergedError } from "./graph/execute.js";
+import { reviewCommit } from "./graph/execute.js";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import {
   spaces,
@@ -91,8 +91,10 @@ export default class Changes extends View {
     this.input = InputState.new({ placeholder: "Commit message" });
     this.input.on("change", (_e, cx) => {
       const hadMessage = Boolean(this.message.trim());
+      const reviewingCommit = Boolean(this.commitReview);
       this.message = this.input.value();
-      if (hadMessage !== Boolean(this.message.trim())) cx.notify();
+      this.commitReview = null;
+      if (reviewingCommit || hadMessage !== Boolean(this.message.trim())) cx.notify();
     });
     this.input.on("submit", (_e, cx) => this.commit(cx));
     this.input.on("focus", (_e, cx) => {
@@ -153,6 +155,7 @@ export default class Changes extends View {
       this.sync = null;
       this.setLines([]);
       this.message = "";
+      this.commitReview = null;
       this.input.set_value("");
       this.error = null;
       this.note = null;
@@ -342,9 +345,13 @@ export default class Changes extends View {
     cx.notify();
   }
 
-  commit(cx) {
+  commit(cx, confirmation) {
     if (!this.message.trim()) return;
     const message = this.message.trim();
+    const confirmedConflicts =
+      confirmation && confirmation === this.commitReview
+      ? confirmation.conflicts
+      : undefined;
     this.git(
       cx,
       "Commit",
@@ -356,8 +363,55 @@ export default class Changes extends View {
         this.message = "";
         this.input.set_value("");
       },
-      unmergedError,
+      async (git) => {
+        const review = await reviewCommit(git, confirmedConflicts);
+        this.commitReview = null;
+        if (review?.conflicts) {
+          this.commitReview = review;
+          return false;
+        }
+        if (review) throw new Error(review.message);
+        return true;
+      },
     );
+  }
+
+  commitReviewRow(t) {
+    const review = this.commitReview;
+    return v_flex()
+      .px(10)
+      .pb(4)
+      .gap(5)
+      .text_size(11)
+      .child(div().text_color(t.muted).child(review.message))
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
+          .child(
+            div()
+              .id("commit-resolved")
+              .px(8)
+              .py(4)
+              .bg(t.accent)
+              .text_color(t.background)
+              .cursor_pointer()
+              .on_click((_e, cx) => this.commit(cx, review))
+              .child("Stage resolved files and commit"),
+          )
+          .child(
+            div()
+              .id("cancel-commit-review")
+              .px(8)
+              .py(4)
+              .cursor_pointer()
+              .on_click((_e, cx) => {
+                this.commitReview = null;
+                cx.notify();
+              })
+              .child("Cancel"),
+          ),
+      );
   }
 
   // Runs git commands in order for one button; the first failure stops the rest and shows in the note.
@@ -371,8 +425,7 @@ export default class Changes extends View {
     cx.spawn(async (cx) => {
       try {
         const git = (args) => exec("git", args, { cwd: root, on });
-        const error = await preflight?.(git);
-        if (error) throw new Error(error);
+        if (preflight && (!(await preflight(git)) || key() !== context)) return;
 
         for (const args of steps) {
           const r = await git(args);
@@ -1031,6 +1084,7 @@ export default class Changes extends View {
         .when(Boolean(this.note), (e) =>
           e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)),
         )
+        .when(Boolean(this.commitReview), (e) => e.child(this.commitReviewRow(t)))
         .child(
           h_flex()
             .flex_none()

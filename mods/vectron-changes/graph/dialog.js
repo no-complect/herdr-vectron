@@ -18,6 +18,7 @@ export class Dialog {
       const state = InputState.new({ value: field.value ?? "" });
       state.on("change", (_e, cx) => {
         this.values[field.id] = state.value();
+        this.confirmedConflicts = null;
         this.error = null;
         cx.notify();
       });
@@ -54,10 +55,12 @@ export class Dialog {
     this.busy = true;
     this.error = null;
     cx.spawn(async (cx) => {
-      const result = await perform(action, this.values, ctx, { toast: false });
+      const values = { ...this.values, confirmedConflicts: this.confirmedConflicts };
+      const result = await perform(action, values, ctx, { toast: false });
       this.busy = false;
       if (result.ok) closeOverlay(overlay);
       else {
+        this.confirmedConflicts = result.conflicts;
         this.error = result.message;
         cx.notify();
       }
@@ -76,6 +79,7 @@ export class Dialog {
     const t = theme(),
       s = this.spec,
       danger = this.danger();
+    const confirmLabel = this.confirmedConflicts ? "Stage resolved files and commit" : s.confirm;
     const label = (text) => div().pt(14).pb(7).text_size(11.5).text_color(t.dim).child(text);
     const button = (id, text, primary, action) =>
       h_flex()
@@ -198,6 +202,8 @@ export class Dialog {
             .cursor_pointer()
             .on_click((_e, cx) => {
               this.values[c.id] = !on;
+                this.confirmedConflicts = null;
+                this.error = null;
               cx.notify();
             })
             .child(
@@ -229,7 +235,7 @@ export class Dialog {
           .justify_end()
           .child(button("gd-cancel", "Cancel", false, () => closeOverlay(props().overlay)))
           .child(
-            button("gd-ok", this.busy ? "Working…" : s.confirm, true, (_e, cx) => this.confirm(cx)),
+            button("gd-ok", this.busy ? "Working…" : confirmLabel, true, (_e, cx) => this.confirm(cx)),
           ),
       );
   }

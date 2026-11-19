@@ -228,6 +228,31 @@ class CodexAccountingTests(unittest.TestCase):
                 stream.write(json.dumps(reply) + "\n")
             self.assertEqual(m.summarize(path, self.home)["events"][0]["id"], event["id"])
 
+    def test_read_limit_recovers_usage_before_the_retained_events(self):
+        path = self.write(
+            "olderusage",
+            [
+                self.record(
+                    "event_msg", type="token_count", info=dict(last_token_usage=dict(input_tokens=4800))
+                ),
+                self.record("response_item", type="message", role="user", content="old" * 1500),
+                self.record("response_item", type="message", role="assistant", content="latest"),
+            ],
+        )
+        with patch.object(m, "MAX_BYTES", 640):
+            snapshot = m.summarize(path, self.home)
+            (event,) = snapshot["events"]
+            self.assertEqual(m.detail(event, self.home)["text"], "latest")
+            self.assertEqual(snapshot["reported"]["input"], 4800)
+            self.assertTrue(snapshot["reported"]["before_retained_history"])
+            (sample,) = snapshot["usage_samples"]
+            self.assertLess(sample["afterId"], int(event["id"]))
+
+            with patch.object(m, "MAX_USAGE_LOOKBACK", 32):
+                snapshot = m.summarize(path, self.home)
+                self.assertIsNone(snapshot["reported"])
+                self.assertTrue(snapshot["partial_history"])
+
     def test_redaction_and_source_boundary(self):
         secret = "sk-" + "a" * 40
         self.assertNotIn(secret, m.redact("key " + secret))
