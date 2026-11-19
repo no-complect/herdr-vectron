@@ -1,6 +1,6 @@
 # Vectron
 
-Vectron brings the glow and playful timing of classic stand-up vector arcades to Herdr. Switch agents and the environment pulses, flashes, and lights up like the classic games of old. Live context bars pulse as you work in Codex, Claude Code, Grok Build, or Antigravity CLI.
+Vectron brings the glow and playful timing of classic stand-up vector arcades to Herdr. Switch agents and the environment pulses, flashes, and lights up like the classic games of old. Live context bars pulse as you work in Codex, Claude Code, Grok Build, or Gemini Antigravity.
 
 ![Vectron workspace set into a vector arcade cabinet](preview.png)
 
