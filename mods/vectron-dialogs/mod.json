@@ -1,0 +1,5 @@
+{
+  "place": "none",
+  "title": "Rename space",
+  "overlay": { "kind": "dialog", "width": 380, "height": 190 }
+}

@@ -18,6 +18,7 @@
     "ctrl-7": "vectron-agents.select-7",
     "ctrl-8": "vectron-agents.select-8",
     "ctrl-9": "vectron-agents.select-9",
+    "shift-f2": "mod.open:vectron-dialogs",
     "ctrl-space": "whistle.whistle",
     "ctrl-shift-k": "mod.open:vectron-dialog-picker",
     "ctrl-shift-p": "mod.open:vectron-dialog-palette",

@@ -241,6 +241,8 @@ export default class Palette extends View {
           command: { name: "mod.clone", args: {} },
         },
       });
+    } else if (e.name === "space.rename") {
+      run("mod.open", { name: "vectron-dialogs" });
     } else if (e.name === "mod.open" && e.args?.name?.startsWith("vectron-")) {
       openMod(e.args.name);
     } else {
