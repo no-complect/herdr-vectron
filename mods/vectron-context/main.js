@@ -25,6 +25,9 @@ const MOD = "vectron-context";
 // selected session without persisting an attachment or any conversation text.
 let panelInstance = null;
 
+const sessionKey = (target) =>
+  JSON.stringify([target?.address, target?.provider, target?.session_id, target?.pid]);
+
 async function readSession(request, timeout = 15000) {
   const result = await exec(
     "python3",
@@ -61,14 +64,14 @@ export default class ContextInspector extends View {
     this.pinned = null;
     this.details = null;
     this.detailKey = null;
-    this.manual = {};
+    this.manual = new Map();
     const selectedPath =
       options.selectedPath ??
-      (this.expandedTarget?.address === attachment?.target?.address
+      (sessionKey(this.expandedTarget) === sessionKey(attachment?.target)
         ? attachment?.selectedPath
         : null);
     if (selectedPath && this.expandedTarget?.address) {
-      this.manual[this.expandedTarget.address] = selectedPath;
+      this.manual.set(sessionKey(this.expandedTarget), selectedPath);
     }
     if (!options.overlay) panelInstance = this;
     this.picker = false;
@@ -100,17 +103,12 @@ export default class ContextInspector extends View {
 
   attachment() {
     const target = this.target();
-    return { target, selectedPath: this.manual[target?.address] };
+    return { target, selectedPath: this.manual.get(sessionKey(target)) };
   }
 
   targetIdentity(target) {
-    return JSON.stringify([
-      target?.address,
-      target?.provider,
-      target?.title,
-      target?.cwd,
-      this.manual[target?.address],
-    ]);
+    const key = sessionKey(target);
+    return JSON.stringify([key, target?.title, target?.cwd, this.manual.get(key)]);
   }
 
   visible() {
@@ -170,26 +168,35 @@ export default class ContextInspector extends View {
 
     const request = {
       ...target,
-      path: this.manual[target.address],
+      path: this.manual.get(sessionKey(target)),
       signature: force ? null : this.data?.signature,
     };
     // Two visits to the same session can have different reads in flight.
     this.pendingRead = request;
+    const isCurrentRead = () =>
+      !this.closed &&
+      this.pendingRead === request &&
+      this.targetIdentity(this.target()) === identity;
     cx.spawn(async (cx) => {
       try {
         const response = await readSession(request);
-        if (this.closed || this.pendingRead !== request) return;
+        if (!isCurrentRead()) return;
 
         const previous = this.data;
+        const sameSession = previous?.path && previous.path === response.path;
+        if (previous?.path && !sameSession) {
+          this.replayCutoff = null;
+          this.dataFlash.burst = null;
+          this.clearDetail();
+        }
         this.data = response.unchanged ? { ...previous, ...response } : response;
         this.error = null;
 
-        const sameSession = previous?.path && previous.path === response.path;
         if (!response.unchanged && this.replayCutoff === null && sameSession && this.visible()) {
           this.flashUpdatedCounts(cx, previous, this.data);
         }
       } catch (error) {
-        if (!this.closed && this.pendingRead === request) {
+        if (isCurrentRead()) {
           this.error = String(error.message || error);
         }
       } finally {
@@ -219,6 +226,7 @@ export default class ContextInspector extends View {
           {
             action: "detail",
             source: event.source,
+            offset: event.offset,
             line: event.line,
             field: event.field,
             protected: event.protected,
@@ -499,7 +507,7 @@ export default class ContextInspector extends View {
       .child(
         this.button("context-follow", "Follow focused session automatically", (cx) => {
           const target = this.target();
-          if (target) delete this.manual[target.address];
+          if (target) this.manual.delete(sessionKey(target));
           this.picker = false;
           this.refresh(cx, true);
         }),
@@ -520,7 +528,7 @@ export default class ContextInspector extends View {
                 .hover((s) => s.bg(t.hover))
                 .on_click((_e, cx) => {
                   const target = this.target();
-                  if (target) this.manual[target.address] = candidate.path;
+                  if (target) this.manual.set(sessionKey(target), candidate.path);
                   this.picker = false;
                   this.refresh(cx, true);
                   cx.notify();

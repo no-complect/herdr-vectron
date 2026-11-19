@@ -178,7 +178,7 @@ class CodexAccountingTests(unittest.TestCase):
             ],
         )
         result = m.summarize(path, self.home)
-        self.assertEqual(result["persistent"]["world:agents_md"], "2")
+        self.assertEqual(result["persistent"]["world:agents_md"], result["events"][-1]["id"])
         self.assertNotIn("private runtime words", str(result["events"]))
         self.assertNotIn("new instructions", str(result["events"]))
         preview = m.detail(dict(source=str(path), line=1), self.home)
@@ -204,6 +204,29 @@ class CodexAccountingTests(unittest.TestCase):
         self.assertLess(result["events"][0]["tokens"], 20)
         self.assertTrue(any("incomplete" in n for n in result["notes"]))
         self.assertTrue(any("Image/audio" in n for n in result["notes"]))
+
+    def test_read_limit_keeps_recent_events_usage_and_preview_offsets(self):
+        path = self.write(
+            "large000",
+            [
+                self.record("response_item", type="message", role="user", content="old" * 1500),
+                self.record("response_item", type="message", role="user", content="latest"),
+                self.record(
+                    "event_msg", type="token_count", info=dict(last_token_usage=dict(input_tokens=42))
+                ),
+            ],
+        )
+        with patch.object(m, "MAX_BYTES", 640):
+            snapshot = m.summarize(path, self.home)
+            self.assertTrue(any("read limit" in note for note in snapshot["notes"]))
+            self.assertEqual(snapshot["reported"]["input"], 42)
+            (event,) = snapshot["events"]
+            self.assertEqual(m.detail(event, self.home)["text"], "latest")
+
+            reply = self.record("response_item", type="message", role="assistant", content="new reply")
+            with path.open("a") as stream:
+                stream.write(json.dumps(reply) + "\n")
+            self.assertEqual(m.summarize(path, self.home)["events"][0]["id"], event["id"])
 
     def test_redaction_and_source_boundary(self):
         secret = "sk-" + "a" * 40
@@ -341,7 +364,7 @@ class OtherProvidersTests(unittest.TestCase):
         self.assertNotIn("private hidden reasoning", str(result))
         self.assertNotIn("private injected rule", str(result))
         for event in result["events"]:
-            request = dict(source=event["source"], line=event["line"], field=event["field"])
+            request = dict(source=event["source"], offset=event["offset"], field=event["field"])
             preview = m.detail(request, self.home)["text"]
             if event["protected"]:
                 self.assertNotIn("private runtime", preview)

@@ -2,6 +2,12 @@
 // against disposable repositories. exec has Herdr's (program, argv, options) shape.
 import { READ, commandsFor, gitError } from "./git.js";
 
+export async function unmergedError(git) {
+  const result = await git([...READ, "ls-files", "--unmerged"]);
+  if (result.code !== 0) return "Could not check for unresolved merge conflicts.";
+  return result.stdout.trim() ? "Resolve the merge conflicts before staging every change." : null;
+}
+
 export async function executeAction(action, values, ctx, exec) {
   const git = (args) => exec("git", args, { cwd: ctx.root, on: ctx.on });
   const commands = commandsFor(action, values, ctx);
@@ -31,14 +37,8 @@ export async function executeAction(action, values, ctx, exec) {
   }
   // Staging everything would mark unresolved conflicts resolved and commit their markers.
   if (action.type === "commit" && values.all) {
-    const unmerged = await git([...READ, "ls-files", "--unmerged"]);
-    if (unmerged.code !== 0 || unmerged.stdout.trim()) {
-      return {
-        ok: false,
-        message:
-          'There are unresolved merge conflicts. Resolve them first, or untick "Stage every change" to let git decide.',
-      };
-    }
+    const message = await unmergedError(git);
+    if (message) return { ok: false, message };
   }
   // Git has no transaction spanning these commands and other terminals. This
   // preflight detects an already changed context; it cannot lock out future edits.

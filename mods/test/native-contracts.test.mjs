@@ -195,7 +195,7 @@ function tasks() {
   };
 }
 
-test("Context rejects a late read from another agent and skips refreshes while hidden", async () => {
+test("Context rejects late reads across agent and session switches and skips hidden refreshes", async () => {
   const requests = [];
   const herdr = {
     exec: (_program, args) =>
@@ -260,9 +260,25 @@ test("Context rejects a late read from another agent and skips refreshes while h
   await currentRead.flush();
   assert.equal(view.data.path, "/current-read-of-old");
 
+  selected = { ...selected, session_id: "first-thread", pid: 123 };
+  view.refresh(timeline.context);
+  view.replayCutoff = 12;
+  selected = { ...selected, session_id: "second-thread", pid: 456 };
+  const nextSession = tasks();
+  view.refresh(nextSession.context);
+  assert.equal(requests.length, 7);
+
+  requests[5].resolve({ path: "/first-session" });
+  await timeline.flush();
+  assert.equal(view.data, null);
+  assert.equal(view.replayCutoff, null);
+  requests[6].resolve({ path: "/second-session" });
+  await nextSession.flush();
+  assert.equal(view.data.path, "/second-session");
+
   isVisible = false;
   view.refresh(timeline.context);
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 7);
 });
 
 test("Context meters retain their native pulse rates and flash only changed categories", async () => {
@@ -351,6 +367,45 @@ test("Files discards a stale directory listing when the focused workspace change
   assert.equal(view.loading, false);
 });
 
+test("Changes checks the index before committing all files", async () => {
+  let unmerged = true;
+  const writes = [];
+  const { default: Changes } = await loadMod("vectron-changes", "main.js", {
+    herdr: {
+      exec: async (_program, args) => {
+        if (args.includes("--unmerged")) return { code: 0, stdout: unmerged ? "conflict" : "" };
+        writes.push(Array.from(args));
+        return { code: 0 };
+      },
+      focused: () => ({ pane: null, cwd: "/repo" }),
+      spaces: () => [],
+      panes: () => [],
+      readTextFile: noop, watchFolder: noop, theme: noop, settings: noop, props: noop,
+      run: noop, shared: noop, setShared: noop, nextCommand: noop, openOverlay: noop,
+      closeOverlay: noop, home: noop, notify: noop, knownAgents: noop, updates: noop,
+    },
+    "gpui-kit": { PathBuilder: noop },
+    "gpui-base": { v_virtual_list: noop, TextView: noop },
+  });
+  const queue = tasks();
+  const view = new Changes();
+  view.root = "/repo";
+  view.context = JSON.stringify({ cwd: "/repo", on: null });
+  view.message = "Finish merge";
+  view.input = { set_value: noop };
+  view.refresh = noop;
+
+  view.commit(queue.context);
+  await queue.flush();
+  assert.match(view.note, /merge conflicts/);
+  assert.deepEqual(writes, []);
+
+  unmerged = false;
+  view.commit(queue.context);
+  await queue.flush();
+  assert.deepEqual(writes, [["add", "-A"], ["commit", "-m", "Finish merge"]]);
+});
+
 test("AI usage normalizes provider data and gives unsupported agents a label without an API call", async () => {
   const requests = [];
   const { sourcesFor, fetchUsage } = await loadMod(
@@ -397,4 +452,55 @@ test("AI usage normalizes provider data and gives unsupported agents a label wit
   assert.equal(window.used, 15);
   assert.equal(window.short, "5h");
   assert.equal(requests.length, 1);
+});
+
+test("AI usage pauses automatic polling while idle and resumes when an agent is visible", async () => {
+  const state = new Map();
+  let tab = "agent";
+  let requests = 0;
+  const herdr = {
+    focused: () => ({ tab }),
+    panes: () => [
+      {
+        tab: "agent",
+        terminal: "t1",
+        focused: true,
+        program: { agent: true, key: "codex", name: "Codex" },
+      },
+    ],
+    agents: () => [],
+    shared: (key) => state.get(key),
+    setShared: (key, value) => state.set(key, value),
+    home: () => "/fixture",
+    readTextFile: async () => JSON.stringify({ tokens: { access_token: "fixture-token" } }),
+    props: noop, exec: noop, openOverlay: noop, settings: noop, theme: noop,
+  };
+  const { default: AiUsage } = await loadMod("vectron-ai-usage", "main.js", { herdr }, {
+    fetch: async () => {
+      requests += 1;
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  const queue = tasks();
+  let tick;
+  queue.context.timer.every = (_interval, callback) => {
+    tick = callback;
+  };
+  const view = new AiUsage();
+  view.init({}, queue.context);
+  view.sync(queue.context);
+  await queue.flush();
+  assert.equal(requests, 1);
+
+  tab = "shell";
+  view.sync(queue.context);
+  state.get("vectron-ai-usage.codex").checked = "1970-01-01T00:00:00Z";
+  tick(queue.context);
+  await queue.flush();
+  assert.equal(requests, 1);
+
+  tab = "agent";
+  view.sync(queue.context);
+  await queue.flush();
+  assert.equal(requests, 2);
 });

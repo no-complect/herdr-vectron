@@ -440,6 +440,7 @@ def resolve(request, home):
 class Accounting:
     def __init__(self):
         self.events = []
+        self.next_event_id = 0
         self.calls = {}
         self.segment = 0
         self.turn = 0
@@ -460,7 +461,7 @@ class Accounting:
         label,
         text,
         path,
-        line,
+        offset,
         timestamp,
         field="",
         persistent=None,
@@ -470,7 +471,7 @@ class Accounting:
             return
         byte_count = len(text.encode("utf-8"))
         event = dict(
-            id=str(len(self.events)),
+            id=str(self.next_event_id),
             category=category,
             label=redact(label)[:110],
             tokens=(byte_count + 3) // 4,
@@ -479,7 +480,7 @@ class Accounting:
             segment=self.segment,
             turn=self.turn,
             source=str(path),
-            line=line,
+            offset=offset,
             field=field,
             persistent=persistent,
             protected=protected,
@@ -487,12 +488,16 @@ class Accounting:
             if protected
             else redact(text[:600])[:160],
         )
+        self.next_event_id += 1
         if persistent:
             self.persistent[persistent] = event["id"]
         self.media += text.count("[media omitted]")
         self.events.append(event)
 
-    def message(self, payload, path, line, ts, field=""):
+    def usage_sample(self):
+        return dict(self.reported, afterId=int(self.events[-1]["id"]) if self.events else -1)
+
+    def message(self, payload, path, offset, ts, field=""):
         role = payload.get("role", "")
         text = visible_text(payload.get("content", []))
         category = "assistant" if role == "assistant" else "user"
@@ -508,9 +513,9 @@ class Accounting:
                 category, label = "environment", "Environment update"
             else:
                 label = text.strip()[:100].partition("\n")[0] or label
-        self.add(category, label, text, path, line, ts, field=field, protected=protected)
+        self.add(category, label, text, path, offset, ts, field=field, protected=protected)
 
-    def feed(self, row, path, line):
+    def feed(self, row, path, offset):
         kind, p, ts = row.get("type"), row.get("payload", {}), row.get("timestamp", "")
         if not isinstance(p, dict):
             return
@@ -522,7 +527,7 @@ class Accounting:
                 "Runtime instructions · recorded",
                 text,
                 path,
-                line,
+                offset,
                 ts,
                 "base",
                 "base",
@@ -542,7 +547,7 @@ class Accounting:
                         label,
                         visible_text(state[key]),
                         path,
-                        line,
+                        offset,
                         ts,
                         "world:" + key,
                         "world:" + key,
@@ -564,16 +569,16 @@ class Accounting:
                     timestamp=ts,
                     window=self.window,
                 )
-                self.samples.append(dict(self.reported, afterId=len(self.events) - 1))
+                self.samples.append(self.usage_sample())
         elif kind == "compacted":
             self.segment += 1
             self.add(
-                "summary", "Compaction boundary", p.get("message") or "", path, line, ts, "compact"
+                "summary", "Compaction boundary", p.get("message") or "", path, offset, ts, "compact"
             )
             # A replacement history is only shown when the recorder explicitly saves it.
             for index, replacement in enumerate(p.get("replacement_history") or []):
                 if isinstance(replacement, dict) and replacement.get("type") == "message":
-                    self.message(replacement, path, line, ts, "replacement:" + str(index))
+                    self.message(replacement, path, offset, ts, "replacement:" + str(index))
                 elif (
                     isinstance(replacement, dict) and replacement.get("type") == "additional_tools"
                 ):
@@ -582,7 +587,7 @@ class Accounting:
                         "Tool definitions after compaction",
                         visible_text(replacement.get("tools", [])),
                         path,
-                        line,
+                        offset,
                         ts,
                         persistent="world:top_level_tools",
                         protected=True,
@@ -592,12 +597,12 @@ class Accounting:
         elif kind == "response_item":
             typ = p.get("type")
             if typ == "message":
-                self.message(p, path, line, ts)
+                self.message(p, path, offset, ts)
             elif typ in ("function_call", "custom_tool_call"):
                 name = p.get("name", "tool")
                 text = visible_text(p.get("arguments", p.get("input", "")))
                 self.calls[p.get("call_id")] = (name, text)
-                self.add("calls", name, text, path, line, ts)
+                self.add("calls", name, text, path, offset, ts)
             elif typ in ("function_call_output", "custom_tool_call_output"):
                 name, args = self.calls.get(p.get("call_id"), ("tool", ""))
                 text = visible_text(p.get("output", ""))
@@ -610,14 +615,14 @@ class Accounting:
                         if re.search(r"MEMORY\.md|/memories/", args)
                         else "files"
                     )
-                self.add(category, name + " · result", text, path, line, ts)
+                self.add(category, name + " · result", text, path, offset, ts)
             elif typ == "additional_tools":
                 self.add(
                     "tools",
                     "Additional tool definitions",
                     visible_text(p.get("tools", [])),
                     path,
-                    line,
+                    offset,
                     ts,
                     protected=True,
                 )
@@ -625,11 +630,11 @@ class Accounting:
                 self.hidden_reasoning += 1
         # event_msg/item_completed mirrors response_item: deliberately do not count it twice.
 
-    def claude(self, row, path, line):
+    def claude(self, row, path, offset):
         typ, ts = row.get("type"), row.get("timestamp", "")
         if typ == "system" and row.get("subtype") == "compact_boundary":
             self.segment += 1
-            self.add("summary", "Compaction boundary", "", path, line, ts, "claude")
+            self.add("summary", "Compaction boundary", "", path, offset, ts, "claude")
             return
         msg = row.get("message") or {}
         if typ not in ("user", "assistant") or not isinstance(msg, dict):
@@ -649,7 +654,7 @@ class Accounting:
                 timestamp=ts,
                 window=None,
             )
-            self.samples.append(dict(self.reported, afterId=len(self.events) - 1))
+            self.samples.append(self.usage_sample())
         content = msg.get("content", [])
         if isinstance(content, str):
             content = [{"type": "text", "text": content}]
@@ -667,7 +672,7 @@ class Accounting:
                     part.get("name", "Tool call"),
                     visible_text(part.get("input")),
                     path,
-                    line,
+                    offset,
                     ts,
                     field,
                 )
@@ -677,7 +682,7 @@ class Accounting:
                     "Tool result",
                     visible_text(part.get("content")),
                     path,
-                    line,
+                    offset,
                     ts,
                     field,
                 )
@@ -690,12 +695,12 @@ class Accounting:
                     "Your prompt" if typ == "user" else "Assistant reply",
                     text,
                     path,
-                    line,
+                    offset,
                     ts,
                     field,
                 )
 
-    def grok(self, row, path, line):
+    def grok(self, row, path, offset):
         typ, ts = row.get("type"), row.get("timestamp", "")
         text = visible_text(row.get("content", ""))
         reason = row.get("synthetic_reason")
@@ -707,7 +712,7 @@ class Accounting:
                 "Runtime instructions · recorded",
                 text,
                 path,
-                line,
+                offset,
                 ts,
                 "grok:content",
                 protected=True,
@@ -716,7 +721,7 @@ class Accounting:
             if reason == "compaction_meta":
                 # This file is a retained snapshot, not an append-only pre-compaction log.
                 self.add(
-                    "summary", "Compacted history · recorded", text, path, line, ts, "grok:content"
+                    "summary", "Compacted history · recorded", text, path, offset, ts, "grok:content"
                 )
             elif reason and reason != "human":
                 self.add(
@@ -724,24 +729,24 @@ class Accounting:
                     "Runtime injection · " + str(reason),
                     text,
                     path,
-                    line,
+                    offset,
                     ts,
                     "grok:content",
                     protected=True,
                 )
             else:
                 self.turn += 1
-                self.add("user", "Your prompt", text, path, line, ts, "grok:content")
+                self.add("user", "Your prompt", text, path, offset, ts, "grok:content")
         elif typ == "assistant":
             self.model = row.get("model_id") or self.model
-            self.add("assistant", "Assistant reply", text, path, line, ts, "grok:content")
+            self.add("assistant", "Assistant reply", text, path, offset, ts, "grok:content")
             for index, call in enumerate(row.get("tool_calls") or []):
                 if not isinstance(call, dict):
                     continue
                 name = call.get("name") or "Tool call"
                 args = visible_text(call.get("arguments", ""))
                 self.calls[call.get("id")] = (name, args)
-                self.add("calls", name, args, path, line, ts, "grok:call:" + str(index))
+                self.add("calls", name, args, path, offset, ts, "grok:call:" + str(index))
         elif typ == "tool_result":
             name, args = self.calls.get(row.get("tool_call_id"), ("Tool", ""))
             self.add(
@@ -749,7 +754,7 @@ class Accounting:
                 name + " · result",
                 text,
                 path,
-                line,
+                offset,
                 ts,
                 "grok:content",
             )
@@ -769,7 +774,7 @@ class Accounting:
                 label="CONTEXT ESTIMATE",
             )
 
-    def agy(self, row, path, line):
+    def agy(self, row, path, offset):
         typ, ts = row.get("type"), row.get("created_at", "")
         if row.get("thinking"):
             self.hidden_reasoning += 1
@@ -782,7 +787,7 @@ class Accounting:
                 "Your prompt",
                 visible_text(row.get("content", "")),
                 path,
-                line,
+                offset,
                 ts,
                 "agy:content",
             )
@@ -792,7 +797,7 @@ class Accounting:
                 "Assistant reply",
                 visible_text(row.get("content", "")),
                 path,
-                line,
+                offset,
                 ts,
                 "agy:content",
             )
@@ -803,7 +808,7 @@ class Accounting:
                         call.get("name") or "Tool call",
                         visible_text(call.get("args", {})),
                         path,
-                        line,
+                        offset,
                         ts,
                         "agy:call:" + str(index),
                     )
@@ -818,17 +823,50 @@ class Accounting:
                     window=None,
                     timestamp=ts,
                 )
-                self.samples.append(dict(self.reported, afterId=len(self.events) - 1))
+                self.samples.append(self.usage_sample())
         elif typ == "GENERIC":
             self.add(
                 "results",
                 "Recorded result",
                 visible_text(row.get("content") or row.get("error", "")),
                 path,
-                line,
+                offset,
                 ts,
                 "agy:content",
             )
+
+
+def transcript_ranges(parts, provider):
+    total = 0
+    sources = []
+    for source, boundary in parts:
+        size = source.stat().st_size
+        end = size if boundary is None else min(size, boundary)
+        sources.append((source, end, total))
+        total += size if boundary is None else boundary
+
+    remaining = MAX_BYTES
+    ranges = []
+    partial = False
+    # Budget newest data first, then replay retained files in chronological order.
+    for source, end, base in reversed(sources):
+        budget = remaining
+        if provider == "grok" and source.name == "updates.jsonl":
+            # Keep room for chat history alongside the separate usage log.
+            budget -= min(sources[0][1], MAX_BYTES // 2)
+        start = max(0, end - budget)
+        partial |= start > 0
+        remaining -= end - start
+        if start < end:
+            ranges.append((source, start, end, base))
+    return reversed(ranges), partial
+
+
+def skip_record_tail(stream, end):
+    while stream.tell() < end:
+        raw = stream.readline(min(MAX_LINE, end - stream.tell()))
+        if not raw or raw.endswith(b"\n"):
+            return
 
 
 def summarize(path, home):
@@ -857,55 +895,52 @@ def summarize(path, home):
         notes.append(
             "Antigravity result steps are grouped under Tool results. Compaction boundaries are not reconstructed from these transcripts."
         )
-    used = 0
-    for source, boundary in parts:
+    ranges, partial = transcript_ranges(parts, provider)
+    if partial:
+        notes.append("The read limit was reached. This view shows the most recent transcript data.")
+    for source, start, end, base in ranges:
         with source.open("rb") as stream:
-            line = 0
-            while True:
-                if boundary is not None and stream.tell() >= boundary:
-                    break
-                remaining = MAX_BYTES - used
-                if remaining <= 0:
-                    notes.append("The read limit was reached; this view is partial.")
-                    break
-                raw = stream.readline(min(MAX_LINE + 1, remaining))
+            if start:
+                stream.seek(start - 1)
+                if stream.read(1) != b"\n":
+                    skip_record_tail(stream, end)
+            position = stream.tell()
+            while position < end:
+                offset = position
+                raw = stream.readline(min(MAX_LINE + 1, end - position))
                 if not raw:
                     break
-                used += len(raw)
-                line += 1
-                if boundary is not None and stream.tell() > boundary:
-                    accounting.malformed += 1
-                    break
+                position += len(raw)
                 if len(raw) > MAX_LINE:
                     notes.append("An oversized record was skipped; this view is partial.")
                     # Finish the record without interpreting its fragments as new lines.
-                    while raw and not raw.endswith(b"\n"):
-                        remaining = MAX_BYTES - used
-                        if remaining <= 0:
-                            break
-                        raw = stream.readline(min(MAX_LINE, remaining))
-                        used += len(raw)
+                    if not raw.endswith(b"\n"):
+                        skip_record_tail(stream, end)
+                        position = stream.tell()
                     continue
                 if not raw.endswith(b"\n"):
                     accounting.malformed += 1
                     break
                 try:
                     row = json.loads(raw)
+                    # Each event within a record advances from its byte position. Its ID
+                    # remains stable when an append moves the start of the read window.
+                    accounting.next_event_id = base + offset
                     if provider == "claude":
-                        accounting.claude(row, source, line)
+                        accounting.claude(row, source, offset)
                     elif provider == "grok":
                         if source.name == "updates.jsonl":
                             accounting.grok_usage(row)
                         else:
-                            accounting.grok(row, source, line)
+                            accounting.grok(row, source, offset)
                     elif provider == "agy":
-                        accounting.agy(row, source, line)
+                        accounting.agy(row, source, offset)
                     else:
-                        accounting.feed(row, source, line)
+                        accounting.feed(row, source, offset)
                 except (ValueError, TypeError, AttributeError):
                     accounting.malformed += 1
     if provider == "grok" and accounting.reported:
-        accounting.samples = [dict(accounting.reported, afterId=len(accounting.events) - 1)]
+        accounting.samples = [accounting.usage_sample()]
     if accounting.truncated_records:
         notes.append(
             "The provider truncated some recorded fields; text estimates and previews are partial."
@@ -988,10 +1023,19 @@ def detail(request, home):
             text="Runtime and developer instruction content is not displayed. Only its recorded size is estimated."
         )
     path = allowed(request["source"], home)
-    target = int(request["line"])
+    offset = request.get("offset")
+    target = 1 if offset is not None else int(request["line"])
     if target <= 0:
         raise ValueError("Invalid event position.")
     with path.open("rb") as stream:
+        if offset is not None:
+            offset = int(offset)
+            if offset < 0:
+                raise ValueError("Invalid event position.")
+            if offset > 0:
+                stream.seek(offset - 1)
+                if stream.read(1) != b"\n":
+                    return dict(text="The source record is no longer available.")
         number = 0
         while True:
             raw = stream.readline(MAX_LINE + 1)

@@ -103,7 +103,7 @@ test("the mod manager separates test files, collisions, and user-owned shortcuts
     },
     exec: async (command, args) => {
       calls.push([command, args]);
-      return { code: 0, stdout: "" };
+      return { code: command === "test" ? 1 : 0, stdout: "" };
     },
     writeText: async (_path, text) => {
       keys = JSON.parse(text);
@@ -124,4 +124,37 @@ test("the mod manager separates test files, collisions, and user-owned shortcuts
   keys.global["ctrl-i"] = "user.rebound";
   await uninstall(io, { appHome: "/app", record });
   assert.deepEqual(keys.global, { "ctrl-u": "user.keep", "ctrl-i": "user.rebound" });
+});
+
+test("a failed mod update restores the previous package", async () => {
+  const files = new Map([
+    ["/app/mods/first", "old first"],
+    ["/app/mods/second", "old second"],
+    ["/cache/mods/first", "new first"],
+    ["/cache/mods/second", "new second"],
+  ]);
+  const io = {
+    exec: async (command, args) => {
+      const [from, to] = args.slice(-2);
+      if (command === "test") return { code: Number(!files.has(args[1])) };
+      if (command === "mv" && from.endsWith("/incoming/mods/second")) {
+        assert.equal(files.get("/app/mods/first"), "new first");
+        return { code: 1, stderr: "fixture activation failure" };
+      }
+      if (command === "cp" || command === "mv") {
+        files.set(to, files.get(from));
+        if (command === "mv") files.delete(from);
+      }
+      if (command === "rm") files.delete(args.at(-1));
+      return { code: 0 };
+    },
+  };
+  const mods = ["first", "second"];
+  const plan = { base: "/cache", mods, layouts: [], clashes: [], keyAdds: [], risks: [] };
+  await assert.rejects(
+    applyInstall(io, { appHome: "/app", plan, record: { mods } }),
+    /fixture activation failure/,
+  );
+  assert.equal(files.get("/app/mods/first"), "old first");
+  assert.equal(files.get("/app/mods/second"), "old second");
 });

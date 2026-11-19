@@ -47,12 +47,11 @@ async function refreshOne(src) {
 const shownList = () => shared(SHOWN)?.list ?? [];
 const due = (src) =>
   src.provider && Date.now() - (Date.parse(shared(keyOf(src.id))?.checked ?? "") || 0) >= EVERY;
-const refreshAll = (force) =>
-  Promise.all(
-    shownList()
-      .filter((s) => force || due(s))
-      .map(refreshOne),
-  );
+async function refreshAll(force = false) {
+  const { list = [], idle } = shared(SHOWN) ?? {};
+  if (idle && !force) return;
+  await Promise.all(list.filter((s) => force || due(s)).map(refreshOne));
+}
 const isStale = (u) =>
   !u?.fetched || Boolean(u.error) || Date.now() - Date.parse(u.fetched) > STALE;
 

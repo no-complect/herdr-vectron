@@ -1,6 +1,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { fileAppearance, gitStatus, statusColor } from "./appearance.js";
 import GitGraph from "./graph/main.js";
+import { unmergedError } from "./graph/execute.js";
 import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
 import {
   spaces,
@@ -355,11 +356,12 @@ export default class Changes extends View {
         this.message = "";
         this.input.set_value("");
       },
+      unmergedError,
     );
   }
 
   // Runs git commands in order for one button; the first failure stops the rest and shows in the note.
-  git(cx, name, steps, done) {
+  git(cx, name, steps, done, preflight) {
     if (!this.root || this.busy || this.loading || this.context !== key()) return;
     const root = this.root,
       on = this.on,
@@ -368,8 +370,12 @@ export default class Changes extends View {
     this.note = null;
     cx.spawn(async (cx) => {
       try {
+        const git = (args) => exec("git", args, { cwd: root, on });
+        const error = await preflight?.(git);
+        if (error) throw new Error(error);
+
         for (const args of steps) {
-          const r = await exec("git", args, { cwd: root, on });
+          const r = await git(args);
           if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim());
         }
         if (key() === context) done?.();
