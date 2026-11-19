@@ -25,10 +25,13 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 | ⌘1–9 and Ctrl+1–9 | Select a space or agent |
 | Shift+F2 or right-click a space → Rename | Rename a space |
 | **+** in the tab bar | Start an agent. Type to filter the list. |
+| Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
 | Context → Expand | Open the larger inspector |
 
 The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming and agent filtering use the command palette's typing flash.
+
+In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
 
 ## Development
 

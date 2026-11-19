@@ -1,0 +1,5 @@
+{
+  "place": "none",
+  "title": "Agent map",
+  "overlay": { "kind": "dialog", "width": 820, "height": 510 }
+}

@@ -23,6 +23,7 @@ Vectron brings the glow and playful timing of classic stand-up vector arcades to
 
 - [layouts/vectron.json](layouts/vectron.json) defines the chrome nodes and the terminal pane frame. [themes/vectron.json](themes/vectron.json) supplies Vectron's palette for both appearances.
 - The bar, chrome, Spaces, Agents, Tabs, and Pane mods draw the frame and navigation. The two picker and two palette variants retain their popup and dialog sizes. The icon folder provides assets they share.
+- The Agent map opens from the Agents header or command palette and shows parent and worker links in the current space.
 - Files, Changes, Context, and Browser Notes implement the side stack. Context invokes its bundled read-only Python reader. The Mods, Settings, Themes, and Keybindings overlays keep the original controls accessible.
 - Copy the [mod folders](mods) containing a main.js, including Whistle and the icon folder. The layout uses Herdr’s bundled menu, prompt, worktree dialog, and stock artwork. Merge [keys.json](keys.json) by section and keep unrelated bindings.
 
