@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 MAX_BYTES = 96 * 1024 * 1024
+MAX_USAGE_LOOKBACK = 4 * 1024 * 1024
 MAX_LINE = 16 * 1024 * 1024
 MAX_EVENTS = 5000
 PROVIDERS = ("codex", "claude", "grok", "agy")
@@ -497,6 +498,55 @@ class Accounting:
     def usage_sample(self):
         return dict(self.reported, afterId=int(self.events[-1]["id"]) if self.events else -1)
 
+    def codex_usage(self, payload, timestamp):
+        if payload.get("type") == "task_started":
+            self.window = payload.get("model_context_window") or self.window
+        if payload.get("type") != "token_count":
+            return
+        info = payload.get("info") or {}
+        usage = info.get("last_token_usage") or {}
+        if isinstance(usage.get("input_tokens"), (int, float)):
+            self.window = info.get("model_context_window") or self.window
+            self.reported = dict(
+                input=usage["input_tokens"],
+                cached=usage.get("cached_input_tokens", 0),
+                output=usage.get("output_tokens", 0),
+                timestamp=timestamp,
+                window=self.window,
+            )
+            self.samples.append(self.usage_sample())
+
+    def claude_usage(self, usage, timestamp):
+        if "input_tokens" not in usage:
+            return
+        # Claude reports uncached, cache-read and cache-write inputs as separate buckets.
+        value = sum(
+            usage.get(k, 0) or 0
+            for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+        )
+        self.reported = dict(
+            input=value,
+            cached=usage.get("cache_read_input_tokens", 0),
+            output=usage.get("output_tokens", 0),
+            timestamp=timestamp,
+            window=None,
+        )
+        self.samples.append(self.usage_sample())
+
+    def agy_usage(self, row, timestamp):
+        value = row.get("input_tokens")
+        if valid_count(value):
+            cached = row.get("cache_read_tokens", 0)
+            cached = cached if valid_count(cached) else 0
+            self.reported = dict(
+                input=value + cached,
+                cached=cached,
+                output=row.get("output_tokens", 0),
+                window=None,
+                timestamp=timestamp,
+            )
+            self.samples.append(self.usage_sample())
+
     def message(self, payload, path, offset, ts, field=""):
         role = payload.get("role", "")
         text = visible_text(payload.get("content", []))
@@ -555,21 +605,8 @@ class Accounting:
                     )
         elif kind == "turn_context":
             self.model = p.get("model") or self.model
-        elif kind == "event_msg" and p.get("type") == "task_started":
-            self.window = p.get("model_context_window") or self.window
-        elif kind == "event_msg" and p.get("type") == "token_count":
-            info = p.get("info") or {}
-            usage = info.get("last_token_usage") or {}
-            if isinstance(usage.get("input_tokens"), (int, float)):
-                self.window = info.get("model_context_window") or self.window
-                self.reported = dict(
-                    input=usage["input_tokens"],
-                    cached=usage.get("cached_input_tokens", 0),
-                    output=usage.get("output_tokens", 0),
-                    timestamp=ts,
-                    window=self.window,
-                )
-                self.samples.append(self.usage_sample())
+        elif kind == "event_msg":
+            self.codex_usage(p, ts)
         elif kind == "compacted":
             self.segment += 1
             self.add(
@@ -640,21 +677,7 @@ class Accounting:
         if typ not in ("user", "assistant") or not isinstance(msg, dict):
             return
         self.model = msg.get("model") or self.model
-        usage = msg.get("usage") or {}
-        if "input_tokens" in usage:
-            # Claude reports uncached, cache-read and cache-write inputs as separate buckets.
-            value = sum(
-                usage.get(k, 0) or 0
-                for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-            )
-            self.reported = dict(
-                input=value,
-                cached=usage.get("cache_read_input_tokens", 0),
-                output=usage.get("output_tokens", 0),
-                timestamp=ts,
-                window=None,
-            )
-            self.samples.append(self.usage_sample())
+        self.claude_usage(msg.get("usage") or {}, ts)
         content = msg.get("content", [])
         if isinstance(content, str):
             content = [{"type": "text", "text": content}]
@@ -812,18 +835,7 @@ class Accounting:
                         ts,
                         "agy:call:" + str(index),
                     )
-            value = row.get("input_tokens")
-            if valid_count(value):
-                cached = row.get("cache_read_tokens", 0)
-                cached = cached if valid_count(cached) else 0
-                self.reported = dict(
-                    input=value + cached,
-                    cached=cached,
-                    output=row.get("output_tokens", 0),
-                    window=None,
-                    timestamp=ts,
-                )
-                self.samples.append(self.usage_sample())
+            self.agy_usage(row, ts)
         elif typ == "GENERIC":
             self.add(
                 "results",
@@ -847,7 +859,7 @@ def transcript_ranges(parts, provider):
 
     remaining = MAX_BYTES
     ranges = []
-    partial = False
+    omitted = []
     # Budget newest data first, then replay retained files in chronological order.
     for source, end, base in reversed(sources):
         budget = remaining
@@ -855,11 +867,12 @@ def transcript_ranges(parts, provider):
             # Keep room for chat history alongside the separate usage log.
             budget -= min(sources[0][1], MAX_BYTES // 2)
         start = max(0, end - budget)
-        partial |= start > 0
+        if start:
+            omitted.append((source, start, end, base))
         remaining -= end - start
         if start < end:
             ranges.append((source, start, end, base))
-    return reversed(ranges), partial
+    return reversed(ranges), omitted
 
 
 def skip_record_tail(stream, end):
@@ -867,6 +880,73 @@ def skip_record_tail(stream, end):
         raw = stream.readline(min(MAX_LINE, end - stream.tell()))
         if not raw or raw.endswith(b"\n"):
             return
+
+
+def transcript_lines(source, start, end, stop=None):
+    stop = end if stop is None else stop
+    with source.open("rb") as stream:
+        if start:
+            stream.seek(start - 1)
+            if stream.read(1) != b"\n":
+                skip_record_tail(stream, stop)
+        while stream.tell() < stop:
+            offset = stream.tell()
+            raw = stream.readline(min(MAX_LINE + 1, end - offset))
+            if not raw:
+                break
+            yield offset, raw
+            if len(raw) > MAX_LINE and not raw.endswith(b"\n"):
+                skip_record_tail(stream, stop)
+
+
+def earlier_usage(omitted, provider):
+    # Look for usage only. The event window stays anchored to recent transcript data.
+    markers = {
+        "codex": (b'"token_count"', b'"task_started"'),
+        "claude": (b'"input_tokens"',),
+        "agy": (b'"input_tokens"',),
+        "grok": (b'"totalTokens"',),
+    }[provider]
+    remaining = MAX_USAGE_LOOKBACK
+    ranges = []
+    for source, stop, end, base in omitted:
+        if provider == "grok" and source.name != "updates.jsonl":
+            continue
+        start = max(0, stop - remaining)
+        ranges.append((source, start, stop, end, base))
+        remaining -= stop - start
+        if not remaining:
+            break
+
+    usage = Accounting()
+    after_id = -1
+    for source, start, stop, end, base in reversed(ranges):
+        for offset, raw in transcript_lines(source, start, end, stop):
+            if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
+                continue
+            if not any(marker in raw for marker in markers):
+                continue
+            previous = usage.reported
+            try:
+                row = json.loads(raw)
+                if provider == "grok":
+                    usage.grok_usage(row)
+                elif provider == "codex" and row.get("type") == "event_msg":
+                    usage.codex_usage(row.get("payload") or {}, row.get("timestamp", ""))
+                elif provider == "claude" and row.get("type") in ("user", "assistant"):
+                    message = row.get("message") or {}
+                    usage.claude_usage(message.get("usage") or {}, row.get("timestamp", ""))
+                elif provider == "agy" and row.get("type") == "PLANNER_RESPONSE":
+                    usage.agy_usage(row, row.get("created_at", ""))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            if usage.reported is not previous:
+                after_id = base + offset
+
+    if usage.reported is None:
+        return None, []
+    reported = dict(usage.reported, before_retained_history=True)
+    return reported, [dict(reported, afterId=after_id)]
 
 
 def summarize(path, home):
@@ -895,52 +975,38 @@ def summarize(path, home):
         notes.append(
             "Antigravity result steps are grouped under Tool results. Compaction boundaries are not reconstructed from these transcripts."
         )
-    ranges, partial = transcript_ranges(parts, provider)
-    if partial:
+    ranges, omitted = transcript_ranges(parts, provider)
+    if omitted:
         notes.append("The read limit was reached. This view shows the most recent transcript data.")
     for source, start, end, base in ranges:
-        with source.open("rb") as stream:
-            if start:
-                stream.seek(start - 1)
-                if stream.read(1) != b"\n":
-                    skip_record_tail(stream, end)
-            position = stream.tell()
-            while position < end:
-                offset = position
-                raw = stream.readline(min(MAX_LINE + 1, end - position))
-                if not raw:
-                    break
-                position += len(raw)
-                if len(raw) > MAX_LINE:
-                    notes.append("An oversized record was skipped; this view is partial.")
-                    # Finish the record without interpreting its fragments as new lines.
-                    if not raw.endswith(b"\n"):
-                        skip_record_tail(stream, end)
-                        position = stream.tell()
-                    continue
-                if not raw.endswith(b"\n"):
-                    accounting.malformed += 1
-                    break
-                try:
-                    row = json.loads(raw)
-                    # Each event within a record advances from its byte position. Its ID
-                    # remains stable when an append moves the start of the read window.
-                    accounting.next_event_id = base + offset
-                    if provider == "claude":
-                        accounting.claude(row, source, offset)
-                    elif provider == "grok":
-                        if source.name == "updates.jsonl":
-                            accounting.grok_usage(row)
-                        else:
-                            accounting.grok(row, source, offset)
-                    elif provider == "agy":
-                        accounting.agy(row, source, offset)
+        for offset, raw in transcript_lines(source, start, end):
+            if len(raw) > MAX_LINE:
+                notes.append("An oversized record was skipped; this view is partial.")
+                continue
+            if not raw.endswith(b"\n"):
+                accounting.malformed += 1
+                break
+            try:
+                row = json.loads(raw)
+                # IDs remain stable when an append moves the start of the read window.
+                accounting.next_event_id = base + offset
+                if provider == "claude":
+                    accounting.claude(row, source, offset)
+                elif provider == "grok":
+                    if source.name == "updates.jsonl":
+                        accounting.grok_usage(row)
                     else:
-                        accounting.feed(row, source, offset)
-                except (ValueError, TypeError, AttributeError):
-                    accounting.malformed += 1
+                        accounting.grok(row, source, offset)
+                elif provider == "agy":
+                    accounting.agy(row, source, offset)
+                else:
+                    accounting.feed(row, source, offset)
+            except (ValueError, TypeError, AttributeError):
+                accounting.malformed += 1
     if provider == "grok" and accounting.reported:
         accounting.samples = [accounting.usage_sample()]
+    if omitted and accounting.reported is None:
+        accounting.reported, accounting.samples = earlier_usage(omitted, provider)
     if accounting.truncated_records:
         notes.append(
             "The provider truncated some recorded fields; text estimates and previews are partial."
@@ -984,6 +1050,7 @@ def summarize(path, home):
         recorded_events=len(accounting.events),
         latest_segment=accounting.segment,
         reported=accounting.reported,
+        partial_history=bool(omitted),
         model=accounting.model,
         notes=notes,
         usage_samples=accounting.samples[-2000:],

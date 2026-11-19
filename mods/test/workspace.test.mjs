@@ -1,7 +1,24 @@
 import assert from "node:assert/strict";
-import { access, readFile, readdir } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import {
+  access,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
+import { executeAction } from "../vectron-changes/graph/execute.js";
 import { parseLog, parseStatus, withUncommitted } from "../vectron-changes/graph/git.js";
 import { layoutLanes } from "../vectron-changes/graph/lanes.js";
 import { fileAppearance, folderAppearance, gitStatus } from "../vectron-files/appearance.js";
@@ -77,6 +94,61 @@ test("file and changes displays preserve whitespace, staged flags, conflicts, an
   assert.equal(folderAppearance("project/tests", true), "folder_test_open");
 });
 
+test("Commit All requires confirmation and then commits a manually resolved merge", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "vectron-merge-test-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = promisify(execFile);
+  const exec = async (program, args, { cwd }) => {
+    const opts = ["-c", "core.hooksPath=.git/no-hooks", "-c", "commit.gpgsign=false", ...args];
+    try {
+      return { code: 0, ...(await run(program, opts, { cwd })) };
+    } catch (error) {
+      if (typeof error.code !== "number") throw error;
+      return { code: error.code, stdout: error.stdout, stderr: error.stderr };
+    }
+  };
+  const git = async (...args) => {
+    const result = await exec("git", args, { cwd: root });
+    assert.equal(result.code, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  const path = join(root, "shared file.txt");
+  await git("init", "-b", "main");
+  await git("config", "user.name", "Fixture");
+  await git("config", "user.email", "fixture@example.invalid");
+  await writeFile(path, "base\n");
+  await git("add", "--all");
+  await git("commit", "-m", "Base");
+  await git("switch", "-c", "topic");
+  await writeFile(path, "topic\n");
+  await git("commit", "-am", "Topic");
+  await git("switch", "main");
+  await writeFile(path, "main\n");
+  await git("commit", "-am", "Main");
+  const merge = await exec("git", ["merge", "--no-ff", "--no-edit", "topic"], { cwd: root });
+  assert.equal(merge.code, 1, merge.stderr);
+  await writeFile(path, "resolved\n");
+
+  const ctx = { root, current: "main", head: await git("rev-parse", "HEAD") };
+  const values = { all: true, message: "Finish merge" };
+  const review = await executeAction({ type: "commit" }, values, ctx, exec);
+  assert.equal(review.ok, false);
+  assert.match(review.conflicts.entries, /shared file\.txt/);
+  assert.match(await git("ls-files", "--unmerged"), /shared file\.txt/);
+  assert.equal(await git("rev-parse", "HEAD"), ctx.head);
+
+  const result = await executeAction(
+    { type: "commit" },
+    { ...values, confirmedConflicts: review.conflicts },
+    ctx,
+    exec,
+  );
+  assert.deepEqual(result, { ok: true });
+  assert.equal((await git("rev-list", "--parents", "-n", "1", "HEAD")).split(" ").length, 3);
+  assert.equal(await git("show", "HEAD:shared file.txt"), "resolved");
+  assert.equal(await git("status", "--porcelain"), "");
+});
+
 test("tab reopen retains provider options, session identity, and the shell fallback", () => {
   const proc = { program: "codex", args: ["-c", "key=value", "--resume", "old", "--no-daemon"] };
   const command = resumeCommand(proc, "test session", "/home/local");
@@ -103,6 +175,7 @@ test("the mod manager separates test files, collisions, and user-owned shortcuts
     },
     exec: async (command, args) => {
       calls.push([command, args]);
+      if (command === "mktemp") return { code: 0, stdout: "/app/.mod-manager-install.fixture\n" };
       return { code: command === "test" ? 1 : 0, stdout: "" };
     },
     writeText: async (_path, text) => {
@@ -137,6 +210,7 @@ test("a failed mod update restores the previous package", async () => {
   const io = {
     exec: async (command, args) => {
       const [from, to] = args.slice(-2);
+      if (command === "mktemp") return { code: 0, stdout: "/app/.mod-manager-install.fixture\n" };
       if (command === "test") return { code: Number(!files.has(args[1])) };
       const replacesSecondMod = (command === "cp" || command === "mv") && to === "/app/mods/second";
       if (!replacementFailed && replacesSecondMod) {
@@ -160,4 +234,101 @@ test("a failed mod update restores the previous package", async () => {
   );
   assert.equal(files.get("/app/mods/first"), "old first");
   assert.equal(files.get("/app/mods/second"), "old second");
+});
+
+test("installer cleanup failures leave backups available and allow another install", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "vectron-install-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const appHome = join(dir, "app");
+  const base = join(dir, "source");
+  await mkdir(appHome);
+  for (const name of ["first", "second"]) {
+    await mkdir(join(base, "mods", name), { recursive: true });
+    await writeFile(join(base, "mods", name, "main.js"), name);
+  }
+
+  const legacyBackup = join(appHome, ".mod-manager-install", "backup");
+  await mkdir(legacyBackup, { recursive: true });
+  await writeFile(join(legacyBackup, "keep"), "previous backup");
+
+  const warnings = [];
+  let failedStaging;
+  let markChecking;
+  let finishCheck;
+  const checking = new Promise((resolve) => {
+    markChecking = resolve;
+  });
+  const waitToFinish = new Promise((resolve) => {
+    finishCheck = resolve;
+  });
+  const io = {
+    warn: (message) => warnings.push(message),
+    exec: async (program, args) => {
+      if (program === "herdr-app") {
+        if (args[1].endsWith("/first")) {
+          markChecking();
+          await waitToFinish;
+        }
+        return { code: 0 };
+      }
+      if (program === "rm" && !failedStaging) {
+        failedStaging = args.at(-1);
+        return { code: 1, stderr: "fixture cleanup failure" };
+      }
+      try {
+        switch (program) {
+          case "mkdir":
+            for (const path of args.filter((arg) => arg !== "-p")) {
+              await mkdir(path, { recursive: args[0] === "-p" });
+            }
+            break;
+          case "mktemp":
+            return { code: 0, stdout: `${await mkdtemp(args[1].replace(/X+$/, ""))}\n` };
+          case "test":
+            await lstat(args[1]);
+            break;
+          case "cp":
+            await cp(args.at(-2), args.at(-1), { recursive: true });
+            break;
+          case "mv":
+            await rename(...args);
+            break;
+          case "rm":
+            await rm(args.at(-1), { recursive: true, force: true });
+            break;
+          case "rmdir":
+            await rmdir(args[0]);
+            break;
+          default:
+            assert.fail(`Unexpected installer command ${program}`);
+        }
+        return { code: 0, stdout: "" };
+      } catch (error) {
+        if (program === "test" && error.code !== "ENOENT") throw error;
+        return { code: 1, stderr: error.message };
+      }
+    },
+  };
+  const install = (name) =>
+    applyInstall(io, {
+      appHome,
+      plan: { base, mods: [name], layouts: [], clashes: [], keyAdds: [], risks: [] },
+    });
+
+  const first = install("first");
+  await Promise.race([checking, first]);
+  try {
+    await assert.rejects(install("second"), /install.*lock/i);
+  } finally {
+    finishCheck();
+    await first;
+  }
+  assert.deepEqual((await first).mods, ["first"]);
+  assert.deepEqual((await install("second")).mods, ["second"]);
+  assert.equal(await readFile(join(appHome, "mods", "first", "main.js"), "utf8"), "first");
+  assert.equal(await readFile(join(appHome, "mods", "second", "main.js"), "utf8"), "second");
+  assert.equal(await readFile(join(legacyBackup, "keep"), "utf8"), "previous backup");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /fixture cleanup failure/);
+  await access(failedStaging);
 });

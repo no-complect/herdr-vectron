@@ -62,7 +62,7 @@ const HINTS = {
 
 // Windows: Herdr's PATH has Git's git but not the Unix tools that come with it, and `find`
 // there is Windows' find.exe. Run those from Git's usr/bin (found through git --exec-path).
-const UNIX_TOOLS = new Set(["find", "ls", "rm", "cp", "mkdir", "mv", "test"]);
+const UNIX_TOOLS = new Set(["find", "ls", "rm", "cp", "mkdir", "mktemp", "mv", "rmdir", "test"]);
 let unixBin = null;
 async function exec(cmd, args, opts) {
   if (UNIX_TOOLS.has(cmd) && win()?.platform === "windows") {
@@ -83,6 +83,7 @@ const io = {
   exec: (cmd, args, opts) => exec(cmd, args, opts),
   readText: (path) => readTextFile(path),
   writeText: (path, text, previous) => writeTextFile(path, text, previous),
+  warn: (body) => notify({ title: "Mod Manager cleanup", body, level: "warning" }),
 };
 
 const anonymous = async (url) => {

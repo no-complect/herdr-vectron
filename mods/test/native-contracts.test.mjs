@@ -297,7 +297,7 @@ test("Context keeps the selected transcript and replay when a known session rest
   const candidate = { path: "/fixture/chosen.jsonl", name: "Chosen session", updated: 0 };
   const requests = [];
   let pid = 123;
-  let sessionId = "same-thread";
+  let sessionId;
   const { default: Inspector } = await loadMod("vectron-context", "main.js", {
     herdr: {
       ...contextHost,
@@ -335,6 +335,14 @@ test("Context keeps the selected transcript and replay when a known session rest
   assert.equal(view.data.path, candidate.path);
   view.replayCutoff = 77;
 
+  sessionId = "same-thread";
+  assert.equal(view.attachment().selectedPath, candidate.path);
+  view.refresh(context);
+  await flush();
+  assert.equal(requests.at(-1).session_id, "same-thread");
+  assert.equal(requests.at(-1).path, candidate.path);
+  assert.equal(view.replayCutoff, 77);
+
   pid = 456;
   view.refresh(context);
   pid = 789;
@@ -342,6 +350,12 @@ test("Context keeps the selected transcript and replay when a known session rest
   assert.equal(requests.at(-1).path, candidate.path);
   assert.equal(view.data.path, candidate.path);
   assert.equal(view.replayCutoff, 77);
+
+  sessionId = "different-thread";
+  view.refresh(context);
+  await flush();
+  assert.equal(requests.at(-1).path, undefined);
+  assert.equal(view.replayCutoff, null);
 
   sessionId = undefined;
   view.refresh(context);
@@ -451,13 +465,15 @@ test("Files discards a stale directory listing when the focused workspace change
   assert.equal(view.loading, false);
 });
 
-test("Changes checks the index before committing all files", async () => {
-  let unmerged = true;
+test("Changes stages resolved paths after confirmation and rechecks the conflict list", async () => {
+  let unmerged = "100644 first 1\tfile a\0";
   const writes = [];
   const { default: Changes } = await loadMod("vectron-changes", "main.js", {
     herdr: {
       exec: async (_program, args) => {
-        if (args.includes("--unmerged")) return { code: 0, stdout: unmerged ? "conflict" : "" };
+        if (args.includes("--unmerged")) return { code: 0, stdout: unmerged };
+        if (args.includes("rev-parse")) return { code: 0, stdout: "HEAD\n" };
+        if (args.includes("symbolic-ref")) return { code: 0, stdout: "main\n" };
         writes.push(Array.from(args));
         return { code: 0 };
       },
@@ -481,13 +497,19 @@ test("Changes checks the index before committing all files", async () => {
 
   view.commit(queue.context);
   await queue.flush();
-  assert.match(view.note, /merge conflicts/);
+  assert.ok(view.commitReview);
   assert.deepEqual(writes, []);
 
-  unmerged = false;
-  view.commit(queue.context);
+  unmerged += "100644 second 2\tfile b\0";
+  view.commit(queue.context, view.commitReview);
+  await queue.flush();
+  assert.ok(view.commitReview);
+  assert.deepEqual(writes, []);
+
+  view.commit(queue.context, view.commitReview);
   await queue.flush();
   assert.deepEqual(writes, [["add", "-A"], ["commit", "-m", "Finish merge"]]);
+  assert.equal(view.commitReview, null);
 });
 
 test("AI usage normalizes provider data and gives unsupported agents a label without an API call", async () => {
