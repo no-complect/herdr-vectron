@@ -32,29 +32,34 @@ CATEGORIES = [
 ]
 
 
+PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----", re.S
+)
+SERVICE_TOKEN = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b"
+)
+BEARER_TOKEN = re.compile(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}")
+QUOTED_SECRET = re.compile(
+    r"""(?ix)(["']?(?:[a-z0-9_]*api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret[_-]?key)["']?\s*[:=]\s*)(["'])(.*?)(\2)"""
+)
+UNQUOTED_SECRET = re.compile(
+    r"""(?ix)(\b(?:[a-z0-9_]*api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret[_-]?key)\s*=\s*)(?!["'])([^\s;,]+)"""
+)
+
+
 def redact(text):
-    text = re.sub(
-        r"-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----",
-        "[private key redacted]",
-        text,
-        flags=re.S,
-    )
-    text = re.sub(
-        r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[A-Z0-9]{16})\b",
-        "[credential redacted]",
-        text,
-    )
-    text = re.sub(r"(?i)(\bBearer\s+)[A-Za-z0-9._~+/=-]{12,}", r"\1[redacted]", text)
-    text = re.sub(
-        r"""(?ix)(["']?(?:[a-z0-9_]*api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret[_-]?key)["']?\s*[:=]\s*)(["'])(.*?)(\2)""",
-        lambda m: m[1] + m[2] + "[redacted]" + m[2],
-        text,
-    )
-    return re.sub(
-        r"""(?ix)(\b(?:[a-z0-9_]*api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret[_-]?key)\s*=\s*)(?!["'])([^\s;,]+)""",
-        r"\1[redacted]",
-        text,
-    )
+    # Skip a scan only when a required literal from the pattern is absent.
+    if "-----BEGIN " in text:
+        text = PRIVATE_KEY_BLOCK.sub("[private key redacted]", text)
+    if any(prefix in text for prefix in ("sk-", "gh", "github_pat_", "AKIA")):
+        text = SERVICE_TOKEN.sub("[credential redacted]", text)
+    if "bearer" in text.lower():
+        text = BEARER_TOKEN.sub(r"\1[redacted]", text)
+    if ":" in text or "=" in text:
+        text = QUOTED_SECRET.sub(lambda match: match[1] + match[2] + "[redacted]" + match[2], text)
+    if "=" in text:
+        text = UNQUOTED_SECRET.sub(r"\1[redacted]", text)
+    return text
 
 
 def visible_text(value):
@@ -66,7 +71,9 @@ def visible_text(value):
                 return visible_text(json.loads(value))
             except (ValueError, RecursionError):
                 pass
-        return re.sub(r'data:(?:image|audio|video)/[^\s"\']+', "[media omitted]", value)
+        if "data:" in value:
+            return re.sub(r'data:(?:image|audio|video)/[^\s"\']+', "[media omitted]", value)
+        return value
     if isinstance(value, list):
         return "\n".join(filter(None, (visible_text(v) for v in value)))
     if isinstance(value, dict):
@@ -88,10 +95,6 @@ def visible_text(value):
             ensure_ascii=False,
         )
     return "" if value is None else str(value)
-
-
-def estimate(text):
-    return math.ceil(len(text.encode("utf-8")) / 4)
 
 
 def valid_count(value):
@@ -465,12 +468,13 @@ class Accounting:
     ):
         if not text and category != "summary":
             return
+        byte_count = len(text.encode("utf-8"))
         event = dict(
             id=str(len(self.events)),
             category=category,
             label=redact(label)[:110],
-            tokens=estimate(text),
-            bytes=len(text.encode("utf-8")),
+            tokens=(byte_count + 3) // 4,
+            bytes=byte_count,
             timestamp=timestamp,
             segment=self.segment,
             turn=self.turn,
@@ -503,7 +507,7 @@ class Accounting:
             elif "<environment_context>" in text:
                 category, label = "environment", "Environment update"
             else:
-                label = text.strip().split("\n")[0][:100] or label
+                label = text.strip()[:100].partition("\n")[0] or label
         self.add(category, label, text, path, line, ts, field=field, protected=protected)
 
     def feed(self, row, path, line):
@@ -936,6 +940,10 @@ def summarize(path, home):
         notes.append(
             "Event list is capped at 5,000 entries; category estimates cover the retained entries only."
         )
+    all_totals = collections.Counter()
+    for event in accounting.events:
+        all_totals[event["category"]] += event["tokens"]
+
     return dict(
         events=events,
         recorded_events=len(accounting.events),
@@ -946,14 +954,7 @@ def summarize(path, home):
         usage_samples=accounting.samples[-2000:],
         files=len(parts),
         persistent=accounting.persistent,
-        all_totals=dict(
-            collections.Counter(
-                {
-                    c: sum(e["tokens"] for e in accounting.events if e["category"] == c)
-                    for c in CATEGORIES
-                }
-            )
-        ),
+        all_totals={category: all_totals[category] for category in CATEGORIES},
         method="Text estimate = UTF-8 bytes / 4. Category estimates are not an exact decomposition of reported input tokens.",
     )
 
@@ -970,14 +971,14 @@ def signature(path, home):
         summary = path.with_name("summary.json").resolve()
         if summary.is_relative_to((home / ".grok/sessions").resolve()) and summary.is_file():
             parts.append((summary, None))
-    values = [
-        (
-            str(p),
-            p.stat().st_mtime_ns if end is None else end,
-            p.stat().st_size if end is None else end,
-        )
-        for p, end in parts
-    ]
+    values = []
+    for source, fork_boundary in parts:
+        if fork_boundary is None:
+            stat = source.stat()
+            values.append((str(source), stat.st_mtime_ns, stat.st_size))
+        else:
+            # A fork sees the parent only through its recorded byte offset.
+            values.append((str(source), fork_boundary, fork_boundary))
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
 

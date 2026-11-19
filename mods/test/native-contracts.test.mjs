@@ -241,11 +241,28 @@ test("Context rejects a late read from another agent and skips refreshes while h
   requests[0].resolve({ path: "/old" });
   await timeline.flush();
   assert.equal(view.data.path, "/new");
-  assert.equal(view.busy, false);
+  assert.equal(view.pendingRead, null);
+
+  selected = { address: "old", provider: "codex" };
+  view.refresh(timeline.context);
+  selected = { address: "another", provider: "claude" };
+  view.refresh(timeline.context);
+  selected = { address: "old", provider: "codex" };
+  const currentRead = tasks();
+  view.refresh(currentRead.context);
+
+  requests[2].resolve({ path: "/first-read-of-old" });
+  requests[3].resolve({ path: "/another" });
+  await timeline.flush();
+  assert.equal(view.data, null);
+
+  requests[4].resolve({ path: "/current-read-of-old" });
+  await currentRead.flush();
+  assert.equal(view.data.path, "/current-read-of-old");
 
   isVisible = false;
   view.refresh(timeline.context);
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 5);
 });
 
 test("Context meters retain their native pulse rates and flash only changed categories", async () => {
@@ -289,7 +306,7 @@ test("Context meters retain their native pulse rates and flash only changed cate
   const pulse = (root, id) =>
     find(root, (node) => node.calls.id?.[0] === id).calls.loop[1].period;
   assert.equal(pulse(meter, "vector-fill-reported"), 477);
-  const breakdown = view.breakdown(changed.events);
+  const breakdown = view.breakdown(view.contextEvents.capture(changed, null, false).totals);
   assert.equal(pulse(breakdown, "vector-fill-user"), 683);
   assert.equal(pulse(breakdown, "vector-fill-files"), 729);
   view.flashUpdatedCounts({}, initial, changed);

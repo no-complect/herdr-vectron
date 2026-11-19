@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { selectEvents, estimatedTotals, reportedUsageAt } from "../vectron-context/model.js";
+import { ContextEvents, selectEvents, estimatedTotals, reportedUsageAt } from "../vectron-context/model.js";
 
 const session = {
   events: [
@@ -42,4 +42,42 @@ test("reported usage stays independent of category estimates and cached input", 
   const estimate = estimatedTotals(selectEvents(session)).sum;
   assert.notEqual(estimate, reportedUsageAt(session, null).input);
   assert.equal(reportedUsageAt(session, null).input, 800);
+});
+
+test("captured totals are reused until events, replay point, or history scope changes", () => {
+  const context = new ContextEvents();
+  const live = context.capture(session, null, false);
+  const metadataRefresh = { ...session, match: "Session identifier" };
+  assert.equal(context.capture(metadataRefresh, null, false), live);
+
+  const replay = context.capture(session, 0, false);
+  assert.deepEqual(replay.events.map(({ id }) => id), ["0"]);
+  assert.equal(replay.totals.sum, 20);
+
+  const history = context.capture(session, null, true);
+  assert.equal(history.totals.sum, 165);
+  const updated = { ...session, events: session.events.slice(0, 2) };
+  assert.equal(context.capture(updated, null, true).totals.sum, 120);
+});
+
+test("timeline reuses unchanged results and reacts to filters, ordering, and new events", () => {
+  const events = [
+    { id: "2", tokens: 12, category: "files", label: "Read source", teaser: "sample" },
+    { id: "9", tokens: 12, category: "files", label: "Read more", teaser: "sample" },
+    { id: "10", tokens: 5, category: "user", label: "Sample prompt", teaser: "question" },
+  ];
+  const context = new ContextEvents();
+  const largest = context.timeline(events, null, "", "largest");
+  assert.deepEqual(largest.map(({ id }) => id), ["2", "9", "10"]);
+  assert.equal(context.timeline(events, null, "", "largest"), largest);
+  assert.deepEqual(
+    context.timeline(events, null, "", "timeline").map(({ id }) => id),
+    ["10", "9", "2"],
+  );
+  assert.deepEqual(
+    context.timeline(events, "files", "file reads", "timeline").map(({ id }) => id),
+    ["9", "2"],
+  );
+  assert.deepEqual(context.timeline(events, "files", "question", "timeline"), []);
+  assert.deepEqual(context.timeline(events.slice(2), null, "sample", "timeline"), [events[2]]);
 });

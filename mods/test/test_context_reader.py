@@ -53,6 +53,34 @@ class ReaderCommandTests(unittest.TestCase):
             self.assertEqual(unchanged["path"], str(session.resolve()))
 
 
+class RedactionTests(unittest.TestCase):
+    def test_each_secret_pattern_is_redacted_in_mixed_text(self):
+        private_key = "private key content"
+        fixtures = {
+            f"-----BEGIN RSA PRIVATE KEY-----\n{private_key}\n-----END RSA PRIVATE KEY-----": private_key,
+            "sk-" + "x" * 20: "x" * 20,
+            "ghp_" + "y" * 20: "y" * 20,
+            "github_pat_" + "z" * 20: "z" * 20,
+            "AKIA" + "A" * 16: "A" * 16,
+            "bEaReR\t" + "B" * 24: "B" * 24,
+            '{"api_key":"fixture credential"}': "fixture credential",
+            'password = "fixture passphrase"': "fixture passphrase",
+            "ACCESS_TOKEN=fixture-secret": "fixture-secret",
+        }
+        for text, secret in fixtures.items():
+            with self.subTest(text=text):
+                output = m.redact(f"Prefix: {text}\nSuffix")
+                self.assertNotIn(secret, output)
+                self.assertIn("redacted", output)
+                self.assertTrue(output.startswith("Prefix: "))
+                self.assertTrue(output.endswith("\nSuffix"))
+
+    def test_plain_text_and_non_secret_punctuation_are_preserved(self):
+        for text in ["Keep this résumé", "password reminder", "time: 10:20", "count=42"]:
+            with self.subTest(text=text):
+                self.assertEqual(m.redact(text), text)
+
+
 class CodexAccountingTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
