@@ -2,6 +2,7 @@ import { View, div, svg, image, PathBuilder } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { agents, closeOverlay, focused, panes, props, run, spaces, terminals, theme } from "herdr";
 import { buildAgentMap, nodeHeight, nodeWidth } from "./model.js";
+import { AttentionPulses, fadeMs, travelMs } from "./pulses.js";
 
 const glyphs = {
   codex: "codex",
@@ -64,7 +65,28 @@ function cables(edges, t) {
   return layers;
 }
 
+function travelingPulse({ parent, child }, signal, t) {
+  const atSource = signal.phase === "start";
+  const travel = { duration: travelMs, easing: "linear" };
+  return div()
+    .id(`agent-map-pulse-${signal.sequence}`)
+    .absolute()
+    .left((atSource ? parent.x + nodeWidth : child.x) - 6)
+    .top((atSource ? parent.y : child.y) - 6)
+    .size(12)
+    .rounded(6)
+    .border(2)
+    .border_color(t.blocked)
+    .bg(t.foreground)
+    .opacity(signal.phase === "fade" ? 0 : 1)
+    .transition("left", travel)
+    .transition("top", travel)
+    .transition("opacity", { duration: fadeMs, easing: "ease-out" });
+}
+
 export default class AgentMap extends View {
+  pulses = new AttentionPulses();
+
   closeMap() {
     const id = props()?.overlay;
     if (id) closeOverlay(id);
@@ -107,7 +129,7 @@ export default class AgentMap extends View {
       );
   }
 
-  render() {
+  render(cx) {
     const t = theme();
     const focus = focused();
     const allSpaces = spaces();
@@ -116,9 +138,14 @@ export default class AgentMap extends View {
     const graph = space
       ? buildAgentMap(space, agents(), terminals(), panes())
       : buildAgentMap(null);
+    this.pulses.update(space?.id, graph.nodes, cx);
     const selected = focus?.agent ?? focus?.shown ?? focus?.terminal;
 
     const paths = cables(graph.edges, t);
+    for (const edge of graph.edges) {
+      const signal = this.pulses.get(edge.child.address);
+      if (signal) paths.push(travelingPulse(edge, signal, t));
+    }
 
     return v_flex()
       .id("agent-map")

@@ -31,7 +31,7 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 
 The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming and agent filtering use the command palette's typing flash.
 
-In the Agent map, a worker that needs input has a highlighted outline.
+In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
 
 ## Development
 

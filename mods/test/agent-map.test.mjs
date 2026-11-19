@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAgentMap } from "../vectron-agent-map/model.js";
+import { AttentionPulses } from "../vectron-agent-map/pulses.js";
 import { Element, find, loadMod } from "./support/herdr.mjs";
 
 const space = { id: "local", name: "Current space", tabs: [{ id: "tab" }] };
@@ -47,10 +48,45 @@ test("branch positions stay fixed when status changes and the layout tolerates d
   assert.equal(long.nodes[0].address, "t0");
 });
 
-test("the overlay renders the live path and peeks at the clicked worker", async () => {
+test("only a newly blocked worker sends a pulse, and old timers cannot replay on space switches", () => {
+  const pulses = new AttentionPulses();
+  const timers = [];
+  let redraws = 0;
+  const cx = { notify: () => redraws++, timer: { after: (_ms, fire) => timers.push(fire) } };
+  const statuses = (status) => [
+    { address: "lead", status: "working", parent: null },
+    { address: "worker", status, parent: "lead" },
+  ];
+
+  pulses.update(space.id, statuses("blocked"), cx);
+  assert.equal(pulses.get("worker"), undefined);
+  pulses.update(space.id, statuses("working"), cx);
+  pulses.update(space.id, statuses("blocked"), cx);
+  const signal = pulses.get("worker");
+  assert.equal(signal.phase, "start");
+  pulses.update(space.id, statuses("blocked"), cx);
+  assert.equal(pulses.get("worker"), signal);
+  timers.shift()(cx);
+  assert.equal(signal.phase, "travel");
+  timers.shift()(cx);
+  assert.equal(signal.phase, "fade");
+  timers.shift()(cx);
+  assert.equal(pulses.get("worker"), undefined);
+  assert.equal(redraws, 3);
+
+  pulses.update(space.id, statuses("idle"), cx);
+  pulses.update(space.id, statuses("blocked"), cx);
+  pulses.update("different-space", statuses("blocked"), cx);
+  timers.splice(0).forEach((fire) => fire(cx));
+  assert.equal(pulses.get("worker"), undefined);
+  assert.equal(redraws, 3);
+});
+
+test("the overlay renders the live path, moves the pulse, and peeks at the clicked worker", async () => {
   const root = terminal("lead");
   const worker = terminal("worker", root.address);
   const calls = [];
+  const timers = [];
   const { default: AgentMap } = await loadMod("vectron-agent-map", "main.js", {
     herdr: {
       agents: () => [agent(root.address)],
@@ -75,14 +111,20 @@ test("the overlay renders the live path and peeks at the clicked worker", async 
   }, {
     window: { paint_path: () => new Element("cable") },
   });
+  const cx = { notify() {}, timer: { after: (_ms, fire) => timers.push(fire) } };
   const view = new AgentMap();
   const byId = (frame, id) => find(frame, (node) => node.calls.id?.[0] === id);
 
-  const initial = view.render();
+  const initial = view.render(cx);
   assert.ok(find(initial, (node) => node.kind === "cable"));
+  assert.equal(byId(initial, "agent-map-pulse-1"), undefined);
   worker.status = "blocked";
-  const attention = view.render();
+  const attention = view.render(cx);
+  const start = byId(attention, "agent-map-pulse-1");
   assert.equal(byId(attention, "agent-map-node-worker").calls.border_color[0], "#ff5775");
+  timers.shift()(cx);
+  const end = byId(view.render(cx), "agent-map-pulse-1");
+  assert.ok(end.calls.left[0] > start.calls.left[0]);
 
   byId(attention, "agent-map-node-worker").calls.on_click[0]();
   assert.deepEqual(calls, [["close", "map"], ["terminal.peek", "worker"]]);
