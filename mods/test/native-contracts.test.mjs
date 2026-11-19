@@ -15,14 +15,19 @@ const colorTheme = {
 
 test("selection flashes keep the three timed peaks, hue changes, and scope", async () => {
   let time = 0;
+  const gaps = [0, 0.99999];
   const { Flash } = await loadMod(
     "vectron-agents",
     "beam.js",
     {},
-    { Date: { now: () => time } },
+    {
+      Date: { now: () => time },
+      Math: Object.create(Math, { random: { value: () => gaps.shift() } }),
+    },
   );
   const flash = new Flash();
   const observed = [];
+  const redrawTimes = [];
   let run;
   const cx = {
     spawn: (task) => {
@@ -32,6 +37,7 @@ test("selection flashes keep the three timed peaks, hue changes, and scope", asy
       time += ms;
     },
     notify: () => {
+      redrawTimes.push(time);
       observed.push(flash.iconPulse("selected", colorTheme));
     },
   };
@@ -39,6 +45,7 @@ test("selection flashes keep the three timed peaks, hue changes, and scope", asy
   assert.equal(flash.iconPulse("other", colorTheme), null);
   await run(cx);
 
+  assert.deepEqual(redrawTimes, [0, 65, 150, 215, 425, 490, 765]);
   assert.deepEqual(
     observed.map((phase) => phase?.opacity ?? null),
     [1, 0, 0.64, 0, 0.36, 0, null],
