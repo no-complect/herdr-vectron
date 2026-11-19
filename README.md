@@ -41,4 +41,9 @@ or a compatibility constraint exists.
 
 ## Credits
 
-Vectron adapts the [Tuuxic layout](https://github.com/Tuuxic/herdr-tuuxic) and [Whistle](https://github.com/Tuuxic/herdr-whistle). It includes [Herdr Context Facey](https://github.com/no-complect/herdr-context-facey) and code from [Herdr](https://github.com/herdrdev/herdr-app). See [LICENSES](LICENSES) and the notices in the bundled mod folders.
+- The workspace layout and navigation mods build on [Tuuxic](https://github.com/Tuuxic/herdr-tuuxic) and bundle [Whistle](https://github.com/Tuuxic/herdr-whistle).
+- The Context panel adapts [Herdr Context Facey](https://github.com/no-complect/herdr-context-facey). The tabs and pane header adapt code from [Herdr App](https://github.com/herdrdev/herdr-app).
+- Changes adapts [Herdr Git Graph](https://github.com/rabeeh-ta/herdr-git-graph), with repository discovery based on [Manygit](https://github.com/rabeeh-ta/manygit). Mod Manager is based on [herdr-plugin-manager](https://github.com/speardragon/herdr-plugin-manager).
+- Files and Changes use [Charmed Icons](https://github.com/littensy/charmed-icons). The interface includes [Lucide](https://lucide.dev) icons.
+
+See [LICENSES](LICENSES) and the license notices in the bundled mod folders.
