@@ -54,23 +54,51 @@ export class Flash {
     if (!color) return div().absolute().w(0).h(0);
 
     const id = "vector-flash-" + key + "-" + burst.sequence + "-" + burst.index;
-    const paint = (part) => div()
-      .id(id + "-" + part)
-      .absolute()
-      .opacity(burst.opacity)
-      .transition("opacity", { duration: burst.index === 2 ? finalFadeMs : fadeMs, easing: "ease-out" });
+    const paint = (part) =>
+      div()
+        .id(id + "-" + part)
+        .absolute()
+        .opacity(burst.opacity)
+        .transition("opacity", {
+          duration: burst.index === 2 ? finalFadeMs : fadeMs,
+          easing: "ease-out",
+        });
     const light = div().absolute().inset_0();
     if (shape === "fill") {
       return light
-        .child(paint("color").inset_0().bg(color + "c4"))
+        .child(
+          paint("color")
+            .inset_0()
+            .bg(color + "c4"),
+        )
         .child(paint("core").inset_0().bg("#f6f8ff66"));
     }
     if (shape === "frame") {
       const edges = (part, width, tint) => [
-        paint(part + "-top").top(0).left(0).right(0).h(width).bg(tint),
-        paint(part + "-bottom").bottom(0).left(0).right(0).h(width).bg(tint),
-        paint(part + "-left").left(0).top(0).bottom(0).w(width).bg(tint),
-        paint(part + "-right").right(0).top(0).bottom(0).w(width).bg(tint),
+        paint(part + "-top")
+          .top(0)
+          .left(0)
+          .right(0)
+          .h(width)
+          .bg(tint),
+        paint(part + "-bottom")
+          .bottom(0)
+          .left(0)
+          .right(0)
+          .h(width)
+          .bg(tint),
+        paint(part + "-left")
+          .left(0)
+          .top(0)
+          .bottom(0)
+          .w(width)
+          .bg(tint),
+        paint(part + "-right")
+          .right(0)
+          .top(0)
+          .bottom(0)
+          .w(width)
+          .bg(tint),
       ];
       return light
         .children(edges("halo", 7, color + "58"))
@@ -78,15 +106,32 @@ export class Flash {
         .children(edges("core", 1, "#f6f8ff"));
     }
     return light
-      .child(paint("wash").inset_0().bg(color + "65"))
-      .child(paint("outline").inset_0().border(2).border_color(color + "dd"))
-      .child(paint("halo").left(0).right(0).bottom(0).h(5).bg(color + "c4"))
+      .child(
+        paint("wash")
+          .inset_0()
+          .bg(color + "65"),
+      )
+      .child(
+        paint("outline")
+          .inset_0()
+          .border(2)
+          .border_color(color + "dd"),
+      )
+      .child(
+        paint("halo")
+          .left(0)
+          .right(0)
+          .bottom(0)
+          .h(5)
+          .bg(color + "c4"),
+      )
       .child(paint("core").left(0).right(0).bottom(0).h(2).bg("#f6f8ff"));
   }
 }
 
 export function flashColor(last, theme) {
-  const colors = [theme.accent, theme.ansi4, theme.ansi5, theme.ansi6]
-    .filter((color) => /^#[0-9a-f]{6}$/i.test(color) && color !== last);
+  const colors = [theme.accent, theme.ansi4, theme.ansi5, theme.ansi6].filter(
+    (color) => /^#[0-9a-f]{6}$/i.test(color) && color !== last,
+  );
   return colors[Math.floor(Math.random() * colors.length)] ?? "#1683ff";
 }

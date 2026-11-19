@@ -16,7 +16,11 @@ export async function readLive(terminal) {
   if (!terminal) return null;
   const text = await readTextFile(`${liveDir()}/${terminal}.json`).catch(() => null);
   if (!text) return null;
-  try { return JSON.parse(text); } catch { return null; }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // One command for the page shown in `terminal`: navigate, back, forward,
@@ -52,7 +56,11 @@ export function watchLive(cx, view, onChange) {
     for (;;) {
       if (view.closed) return;
       let changed;
-      try { changed = await watchFolder(liveDir()); } catch { changed = null; }
+      try {
+        changed = await watchFolder(liveDir());
+      } catch {
+        changed = null;
+      }
       if (view.closed) return;
       if (!changed) {
         // The folder appears once the helper first runs: look again shortly.

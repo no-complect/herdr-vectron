@@ -16,7 +16,13 @@ export async function setZoomBorder(zoomed) {
   const look = (b) => ({ ...b, width });
   const next = withNode(l, "main", (main) => {
     const pane = main.content.pane;
-    return { ...main, content: { ...main.content, pane: { ...pane, border: look(pane.border), focus: look(pane.focus) } } };
+    return {
+      ...main,
+      content: {
+        ...main.content,
+        pane: { ...pane, border: look(pane.border), focus: look(pane.focus) },
+      },
+    };
   });
   await exec("herdr-app", ["do", "layout.set", JSON.stringify({ layout: next })]);
 }

@@ -1,5 +1,5 @@
-mods/tuuxic-tabs/main.js is adapted from Herdr's tabs mod, and
-mods/tuuxic-tabs/pane.js is adapted from Herdr's pane mod, shipped by
+The main.js and pane.js files in this folder adapt Herdr's tabs and pane
+mods through the Tuuxic layout. The original Herdr mods are shipped by
 https://github.com/herdrdev/herdr-app under the Apache License, Version 2.0.
 See LICENSE-APACHE.
 

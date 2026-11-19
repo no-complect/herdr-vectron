@@ -30,7 +30,12 @@ export function paneTitle(p) {
     const title = nameFor(p);
     if (title?.trim()) return title;
   }
-  return ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+  return (
+    ((p.program?.agent || p.program?.shell) && p.program.name) ||
+    p.title ||
+    p.program?.name ||
+    "shell"
+  );
 }
 
 export function syncNames() {
@@ -41,13 +46,13 @@ export function syncNames() {
   const ours = { ...saved };
   const ompSaved = shared(OMP_KEY) ?? {};
   const omp = { ...ompSaved };
-  const tabs = new Map(allSpaces.flatMap(s => s.tabs).map(t => [t.id, t]));
+  const tabs = new Map(allSpaces.flatMap((s) => s.tabs).map((t) => [t.id, t]));
   // Stable priority for split tabs: first OMP, then Claude, then first terminal.
   const pick = new Map();
   for (const p of panes()) {
     if (!p.terminal) continue;
     const cur = pick.get(p.tab);
-    const priority = pane => pane.app === "omp" ? 2 : pane.app === "claude-code" ? 1 : 0;
+    const priority = (pane) => (pane.app === "omp" ? 2 : pane.app === "claude-code" ? 1 : 0);
     if (!cur || priority(p) > priority(cur)) pick.set(p.tab, p);
   }
   for (const [id, p] of pick) {
@@ -61,8 +66,13 @@ export function syncNames() {
     const name = nameFor(p);
     if (!name?.trim()) continue;
     if (p.app === "omp") {
-      if (omp[id] === undefined && tab.named && ours[id] !== tab.name &&
-          !OMP_DEFAULTS.has(tab.name) && tab.name !== name) {
+      if (
+        omp[id] === undefined &&
+        tab.named &&
+        ours[id] !== tab.name &&
+        !OMP_DEFAULTS.has(tab.name) &&
+        tab.name !== name
+      ) {
         omp[id] = false;
         continue;
       }

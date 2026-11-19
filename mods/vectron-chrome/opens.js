@@ -17,7 +17,8 @@ const installed = {};
 // Looks for each mod's main.js, then re-renders (cx: the caller's context).
 export function lookFor(names, cx) {
   cx.spawn(async (cx) => {
-    for (const name of names) installed[name] = (await readTextFile(`${appHome()}/mods/${name}/main.js`)) != null;
+    for (const name of names)
+      installed[name] = (await readTextFile(`${appHome()}/mods/${name}/main.js`)) != null;
     cx.notify();
   });
 }

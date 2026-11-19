@@ -16,9 +16,13 @@
 import { shared, setShared } from "herdr";
 
 // Props as text with sorted keys, so the driver and the mod spell the same field the same way.
-const stable = (v) => (v && typeof v === "object" && !Array.isArray(v)
-  ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stable(v[k])}`).join(",")}}`
-  : JSON.stringify(v ?? null));
+const stable = (v) =>
+  v && typeof v === "object" && !Array.isArray(v)
+    ? `{${Object.keys(v)
+        .sort()
+        .map((k) => `${JSON.stringify(k)}:${stable(v[k])}`)
+        .join(",")}}`
+    : JSON.stringify(v ?? null);
 export const fieldKey = (mod, props) => `${mod} ${stable(props ?? {})}`;
 
 // Announces this copy as a field. Call it from render: two copies announcing at once can

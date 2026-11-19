@@ -28,12 +28,13 @@ export function selectEvents(data, cutoff = null, history = false) {
   const through = (data?.events ?? []).filter(
     (event) => cutoff === null || Number(event.id) <= cutoff,
   );
+  if (history) return through;
+
   const segment = through.at(-1)?.segment ?? 0;
   const latestSnapshots = new Map();
   for (const event of through) {
     if (event.persistent) latestSnapshots.set(event.persistent, event.id);
   }
-  if (history) return through;
   return through.filter((event) => {
     if (event.persistent) return latestSnapshots.get(event.persistent) === event.id;
     return event.segment === segment;
@@ -50,5 +51,64 @@ export function estimatedTotals(events) {
 
 export function reportedUsageAt(data, cutoff) {
   if (cutoff === null) return data?.reported;
-  return (data?.usage_samples ?? []).filter((sample) => sample.afterId <= cutoff).at(-1) ?? null;
+  const samples = data?.usage_samples ?? [];
+  for (let index = samples.length - 1; index >= 0; index--) {
+    if (samples[index].afterId <= cutoff) return samples[index];
+  }
+  return null;
+}
+
+// Reader snapshots replace their event array when the transcript changes.
+// Keep only the current scope and timeline so redraws reuse data, not UI elements.
+export class ContextEvents {
+  capture(snapshot, replayCutoff, showWholeHistory) {
+    const sourceEvents = snapshot?.events;
+    const cached = this.lastCapture;
+    if (
+      cached &&
+      cached.sourceEvents === sourceEvents &&
+      cached.replayCutoff === replayCutoff &&
+      cached.showWholeHistory === showWholeHistory
+    ) {
+      return cached;
+    }
+
+    const events = selectEvents(snapshot, replayCutoff, showWholeHistory);
+    this.lastCapture = {
+      sourceEvents,
+      replayCutoff,
+      showWholeHistory,
+      events,
+      totals: estimatedTotals(events),
+    };
+    this.lastTimeline = null;
+    return this.lastCapture;
+  }
+
+  timeline(events, selectedCategory, searchQuery, order) {
+    const cached = this.lastTimeline;
+    if (
+      cached &&
+      cached.events === events &&
+      cached.selectedCategory === selectedCategory &&
+      cached.searchQuery === searchQuery &&
+      cached.order === order
+    ) {
+      return cached.entries;
+    }
+
+    const entries = events.filter((event) => {
+      if (selectedCategory && event.category !== selectedCategory) return false;
+      if (!searchQuery) return true;
+
+      const categoryLabel = categoryOf(event.category).label;
+      return `${event.label} ${event.teaser} ${categoryLabel}`.toLowerCase().includes(searchQuery);
+    });
+
+    if (order === "largest") entries.sort((a, b) => b.tokens - a.tokens);
+    else entries.sort((a, b) => Number(b.id) - Number(a.id));
+
+    this.lastTimeline = { events, selectedCategory, searchQuery, order, entries };
+    return entries;
+  }
 }

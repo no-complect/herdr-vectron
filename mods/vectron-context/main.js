@@ -15,14 +15,7 @@ import {
   openOverlay,
   closeOverlay,
 } from "herdr";
-import {
-  categories,
-  categoryOf,
-  formatCount,
-  selectEvents,
-  estimatedTotals,
-  reportedUsageAt,
-} from "./model.js";
+import { categories, categoryOf, ContextEvents, formatCount, reportedUsageAt } from "./model.js";
 import { Flash, flashColor } from "./beam.js";
 import { layoutVisibility } from "./visibility.js";
 import { focusedSession, providerNames } from "./target.js";
@@ -47,6 +40,8 @@ async function readSession(request, timeout = 15000) {
 }
 
 export default class ContextInspector extends View {
+  contextEvents = new ContextEvents();
+
   init(_props, cx) {
     this.inputGlow = new InputGlow();
     const options = props() ?? {};
@@ -57,12 +52,12 @@ export default class ContextInspector extends View {
     this.dataFlash = new Flash();
     this.panelFlash = new Flash();
     this.data = null;
-    this.busy = false;
+    this.pendingRead = null;
     this.error = null;
-    this.filter = null;
-    this.sort = "timeline";
-    this.history = false;
-    this.cutoff = null;
+    this.selectedCategory = null;
+    this.timelineOrder = "timeline";
+    this.showWholeHistory = false;
+    this.replayCutoff = null;
     this.pinned = null;
     this.details = null;
     this.detailKey = null;
@@ -80,10 +75,10 @@ export default class ContextInspector extends View {
     this.about = false;
     this.closed = false;
     this.search = InputState.new({ placeholder: "Filter events…" });
-    this.query = "";
+    this.searchQuery = "";
     this.search.on("change", (_e, cx) => {
       this.inputGlow.typing(cx);
-      this.query = this.search.value().toLowerCase();
+      this.searchQuery = this.search.value().toLowerCase();
       cx.notify();
     });
     cx.timer.every(5000, (cx) => this.refresh(cx));
@@ -143,21 +138,26 @@ export default class ContextInspector extends View {
     this.pinned = null;
   }
 
+  resetSession(identity) {
+    this.identity = identity;
+    this.dataFlash.burst = null;
+    this.contextEvents = new ContextEvents();
+    this.data = null;
+    this.error = null;
+    this.pendingRead = null;
+    this.replayCutoff = null;
+    this.clearDetail();
+  }
+
   refresh(cx, force = false) {
     if (this.closed) return;
     if (!force && !this.visible()) return;
+
     const target = this.target();
     const identity = this.targetIdentity(target);
-    if (identity !== this.identity) {
-      this.identity = identity;
-      this.dataFlash.burst = null;
-      this.data = null;
-      this.error = null;
-      this.busy = false;
-      this.cutoff = null;
-      this.clearDetail();
-    }
-    if (this.busy || !target) return;
+    if (identity !== this.identity) this.resetSession(identity);
+
+    if (this.pendingRead || !target) return;
     if (target.address.includes("/")) {
       this.error = "Context currently reads local sessions only.";
       return;
@@ -167,27 +167,36 @@ export default class ContextInspector extends View {
         "Focus a Codex, Claude Code, Grok Build or Antigravity CLI session to inspect it.";
       return;
     }
+
     const request = {
       ...target,
       path: this.manual[target.address],
       signature: force ? null : this.data?.signature,
     };
-    this.busy = true;
+    // Two visits to the same session can have different reads in flight.
+    this.pendingRead = request;
     cx.spawn(async (cx) => {
       try {
-        const data = await readSession(request);
-        if (this.closed || identity !== this.identity) return;
+        const response = await readSession(request);
+        if (this.closed || this.pendingRead !== request) return;
+
         const previous = this.data;
-        this.data = data.unchanged ? { ...this.data, ...data } : data;
+        this.data = response.unchanged ? { ...previous, ...response } : response;
         this.error = null;
-        if (!data.unchanged && this.cutoff === null && previous?.path && previous.path === data.path && this.visible()) {
+
+        const sameSession = previous?.path && previous.path === response.path;
+        if (!response.unchanged && this.replayCutoff === null && sameSession && this.visible()) {
           this.flashUpdatedCounts(cx, previous, this.data);
         }
       } catch (error) {
-        if (identity === this.identity) this.error = String(error.message || error);
+        if (!this.closed && this.pendingRead === request) {
+          this.error = String(error.message || error);
+        }
       } finally {
-        if (identity === this.identity) this.busy = false;
-        cx.notify();
+        if (this.pendingRead === request) {
+          this.pendingRead = null;
+          if (!this.closed) cx.notify();
+        }
       }
     });
   }
@@ -261,7 +270,9 @@ export default class ContextInspector extends View {
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
       .on_click((_e, cx) => {
         this.lastFlashColor = flashColor(this.lastFlashColor, t);
-        this.controlsFlash.start(cx, new Map([[id, this.lastFlashColor]]), { alreadyRendering: true });
+        this.controlsFlash.start(cx, new Map([[id, this.lastFlashColor]]), {
+          alreadyRendering: true,
+        });
         action(cx);
         cx.notify();
       })
@@ -271,8 +282,11 @@ export default class ContextInspector extends View {
   flashUpdatedCounts(cx, previous, current) {
     const before = reportedUsageAt(previous, null);
     const after = reportedUsageAt(current, null);
-    const beforeCounts = estimatedTotals(selectEvents(previous, null, this.history)).counts;
-    const afterCounts = estimatedTotals(selectEvents(current, null, this.history)).counts;
+    const beforeCounts = this.contextEvents
+      .capture(previous, null, this.showWholeHistory).totals.counts;
+    const afterCounts = this.contextEvents
+      .capture(current, null, this.showWholeHistory).totals.counts;
+
     const targets = new Map();
     if (after?.window && (before?.input !== after.input || before?.window !== after.window)) {
       targets.set("reported", this.usageBarColor(after));
@@ -296,7 +310,8 @@ export default class ContextInspector extends View {
   breathingFill(key, color, period) {
     return div()
       .id("vector-fill-" + key)
-      .absolute().inset_0()
+      .absolute()
+      .inset_0()
       .bg(color)
       .loop("opacity", { from: 0.46, to: 1, period });
   }
@@ -319,7 +334,7 @@ export default class ContextInspector extends View {
               .text_size(11)
               .child(
                 usage?.label ??
-                  (this.cutoff === null ? "LAST REPORTED INPUT" : "REPORTED BY THIS POINT"),
+                  (this.replayCutoff === null ? "LAST REPORTED INPUT" : "REPORTED BY THIS POINT"),
               ),
           )
           .child(
@@ -387,18 +402,17 @@ export default class ContextInspector extends View {
       );
   }
 
-  breakdown(events, cx) {
-    const t = theme(),
-      { counts, sum } = estimatedTotals(events);
+  breakdown({ counts, sum }) {
+    const t = theme();
     const active = categories.filter((c) => counts[c.id]);
     const chip = (c) =>
       this.button(
         `category-${c.id}`,
         `${c.label}  ~${formatCount(counts[c.id])}`,
         () => {
-          this.filter = this.filter === c.id ? null : c.id;
+          this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
         },
-        this.filter === c.id,
+        this.selectedCategory === c.id,
       );
     const legend =
       this.width < 400
@@ -445,22 +459,24 @@ export default class ContextInspector extends View {
                 .flex_none()
                 .relative()
                 .bg(c.color + "52")
-                .child(this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)))
+                .child(
+                  this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
+                )
                 .child(this.dataFlash.layer(c.id, "fill"))
                 .cursor_pointer()
                 .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
                 .on_click((_e, cx) => {
-                  this.filter = this.filter === c.id ? null : c.id;
+                  this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
                   cx.notify();
                 }),
             ),
           ),
       )
       .child(legend)
-      .when(Boolean(this.filter), (el) =>
+      .when(Boolean(this.selectedCategory), (el) =>
         el.child(
           this.button("context-reset-filter", "Show all categories", () => {
-            this.filter = null;
+            this.selectedCategory = null;
           }),
         ),
       );
@@ -529,20 +545,8 @@ export default class ContextInspector extends View {
       );
   }
 
-  rows(events, cx) {
+  timelineView(entries) {
     const t = theme();
-    const shown = events
-      .filter(
-        (e) =>
-          (!this.filter || e.category === this.filter) &&
-          (!this.query ||
-            `${e.label} ${e.teaser} ${categoryOf(e.category).label}`
-              .toLowerCase()
-              .includes(this.query)),
-      )
-      .sort((a, b) =>
-        this.sort === "largest" ? b.tokens - a.tokens : Number(b.id) - Number(a.id),
-      );
     return v_flex()
       .flex_1()
       .min_w(0)
@@ -557,9 +561,9 @@ export default class ContextInspector extends View {
               "context-timeline",
               "Timeline",
               () => {
-                this.sort = "timeline";
+                this.timelineOrder = "timeline";
               },
-              this.sort === "timeline",
+              this.timelineOrder === "timeline",
             ),
           )
           .child(
@@ -567,17 +571,21 @@ export default class ContextInspector extends View {
               "context-largest",
               "Largest",
               () => {
-                this.sort = "largest";
+                this.timelineOrder = "largest";
               },
-              this.sort === "largest",
+              this.timelineOrder === "largest",
             ),
           )
           .child(div().flex_1())
-          .child(div().text_size(10).text_color(t.dim).child(`${shown.length} entries`)),
+          .child(div().text_size(10).text_color(t.dim).child(`${entries.length} entries`)),
       )
-      .child(div().relative().w_full()
-        .child(this.inputGlow.layer())
-        .child(Input.new(this.search).w_full().text_size(12)))
+      .child(
+        div()
+          .relative()
+          .w_full()
+          .child(this.inputGlow.layer())
+          .child(Input.new(this.search).w_full().text_size(12)),
+      )
       .child(
         v_flex()
           .relative()
@@ -586,12 +594,12 @@ export default class ContextInspector extends View {
           .child(
             uniform_list(
               "context-events",
-              shown.length,
-              (i) => shown[i].id,
+              entries.length,
+              (i) => entries[i].id,
               (range) => {
                 const rows = [];
                 for (let i = range.start; i < range.end; i++) {
-                  const event = shown[i],
+                  const event = entries[i],
                     category = categoryOf(event.category),
                     selected = this.pinned === event.id;
                   rows.push(
@@ -644,13 +652,13 @@ export default class ContextInspector extends View {
             )
               .size_full()
               .on_item_click((key, cx) => {
-                const event = shown.find((e) => e.id === key);
+                const event = entries.find((e) => e.id === key);
                 if (event) this.inspect(event, cx);
               }),
           )
           .child(Scrollbar.vertical("context-events").absolute().inset_0()),
       )
-      .when(!shown.length, (el) =>
+      .when(!entries.length, (el) =>
         el.child(
           div().p(10).text_size(12).text_color(t.dim).child("No events match these filters."),
         ),
@@ -658,8 +666,11 @@ export default class ContextInspector extends View {
   }
 
   preview(cx) {
-    const t = theme(),
-      event = this.data?.events?.find((e) => e.id === this.pinned);
+    const t = theme();
+    const event = this.pinned === null
+      ? undefined
+      : this.data?.events?.find((event) => event.id === this.pinned);
+
     return v_flex()
       .flex_1()
       .min_w(0)
@@ -722,7 +733,7 @@ export default class ContextInspector extends View {
           )
           .child(
             this.button("context-replay-event", "Replay through this event", () => {
-              this.cutoff = Number(event.id);
+              this.replayCutoff = Number(event.id);
             }),
           )
           .child(
@@ -742,20 +753,32 @@ export default class ContextInspector extends View {
     const next = this.targetIdentity(target);
     const visible = this.visible();
     if (next !== this.identity && visible) this.refresh(cx);
-    const shownTarget = visible ? target?.address ?? "" : null;
+    const shownTarget = visible ? (target?.address ?? "") : null;
     // A hidden stack child might not render until it is selected again.
     const opened = props()?.overlay ? null : shared("vectron.context-open");
     const justOpened = opened && opened.at !== this.lastPanelOpen && Date.now() - opened.at < 750;
     if (shownTarget !== null && (shownTarget !== this.shownTarget || justOpened)) {
-      this.lastPanelFlashColor = justOpened ? opened.color : flashColor(this.lastPanelFlashColor, t);
+      this.lastPanelFlashColor = justOpened
+        ? opened.color
+        : flashColor(this.lastPanelFlashColor, t);
       this.panelFlash.start(cx, new Map([["context-panel", this.lastPanelFlashColor]]), {
         alreadyRendering: true,
       });
     }
     this.lastPanelOpen = opened?.at;
     this.shownTarget = shownTarget;
-    const events = selectEvents(this.data, this.cutoff, this.history),
-      usage = reportedUsageAt(this.data, this.cutoff);
+    const { events, totals } = this.contextEvents.capture(
+      this.data,
+      this.replayCutoff,
+      this.showWholeHistory,
+    );
+    const entries = this.contextEvents.timeline(
+      events,
+      this.selectedCategory,
+      this.searchQuery,
+      this.timelineOrder,
+    );
+    const usage = reportedUsageAt(this.data, this.replayCutoff);
     const wide = this.width > 720;
     const body = (wide ? h_flex().gap(12) : v_flex().gap(10)).items_stretch();
     return v_flex()
@@ -787,12 +810,12 @@ export default class ContextInspector extends View {
               .py(2)
               .rounded(2)
               .bg(t.surface)
-              .text_color(this.cutoff === null ? t.ansi6 : t.accent)
-              .child(this.cutoff === null ? "LIVE" : "REPLAY"),
+              .text_color(this.replayCutoff === null ? t.ansi6 : t.accent)
+              .child(this.replayCutoff === null ? "LIVE" : "REPLAY"),
           )
           .child(div().flex_1())
           .child(
-            this.button("context-refresh", this.busy ? "Reading…" : "Refresh", (cx) =>
+            this.button("context-refresh", this.pendingRead ? "Reading…" : "Refresh", (cx) =>
               this.refresh(cx, true),
             ),
           )
@@ -843,7 +866,7 @@ export default class ContextInspector extends View {
             .text_size(12)
             .text_color(t.muted)
             .child(
-              this.busy
+              this.pendingRead
                 ? "Reading the local session…"
                 : "Select a Codex, Claude Code, Grok Build or Antigravity CLI terminal to inspect its recorded context contributions.",
             ),
@@ -852,7 +875,7 @@ export default class ContextInspector extends View {
       .when(Boolean(this.data?.path), (el) =>
         el
           .child(this.gauge(usage))
-          .child(this.breakdown(events, cx))
+          .child(this.breakdown(totals))
           .child(
             h_flex()
               .gap(5)
@@ -863,9 +886,9 @@ export default class ContextInspector extends View {
                   "context-segment",
                   "Since compact",
                   () => {
-                    this.history = false;
+                    this.showWholeHistory = false;
                   },
-                  !this.history,
+                  !this.showWholeHistory,
                 ),
               )
               .child(
@@ -873,16 +896,16 @@ export default class ContextInspector extends View {
                   "context-history",
                   "Whole history",
                   () => {
-                    this.history = true;
+                    this.showWholeHistory = true;
                   },
-                  this.history,
+                  this.showWholeHistory,
                 ),
               )
               .child(div().flex_1())
-              .when(this.cutoff !== null, (e) =>
+              .when(this.replayCutoff !== null, (e) =>
                 e.child(
                   this.button("context-live", "Back to live", () => {
-                    this.cutoff = null;
+                    this.replayCutoff = null;
                   }),
                 ),
               ),
@@ -893,7 +916,7 @@ export default class ContextInspector extends View {
               .min_w(0)
               .min_h(0)
               .overflow_hidden()
-              .child(this.rows(events, cx).when(wide, (e) => e.h_full()))
+              .child(this.timelineView(entries).when(wide, (e) => e.h_full()))
               .child(this.preview(cx).when(wide, (e) => e.h_full())),
           )
           .child(

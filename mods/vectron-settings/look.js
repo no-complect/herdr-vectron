@@ -22,30 +22,72 @@ const DEFAULT_UI_FONT = "Geist";
 function preview(t, name) {
   const row = () => div().flex().flex_row();
   const col = () => div().flex().flex_col();
-  const term = (bg = t.background, edge = t.border) => div().flex_1().rounded(0).bg(bg).border_1().border_color(edge);
+  const term = (bg = t.background, edge = t.border) =>
+    div().flex_1().rounded(0).bg(bg).border_1().border_color(edge);
   const line = (w, c = t.dim) => div().h(3).w(w).flex_none().rounded(0).bg(c);
-  const lines = (n, c) => col().gap(4).p(5).children([...Array(n)].map((_, i) => line(i % 2 ? 22 : 32, c)));
-  const frame = (el) => el.size_full().rounded(0).overflow_hidden().border_1().border_color(t.border).bg(t.surface);
+  const lines = (n, c) =>
+    col()
+      .gap(4)
+      .p(5)
+      .children([...Array(n)].map((_, i) => line(i % 2 ? 22 : 32, c)));
+  const frame = (el) =>
+    el.size_full().rounded(0).overflow_hidden().border_1().border_color(t.border).bg(t.surface);
   if (name === "main")
     return frame(row())
       .child(col().w(42).border_r(1).border_color(t.border).child(lines(4)))
       .child(
         col()
           .flex_1()
-          .child(row().h(11).gap(2).p(2).border_b(1).border_color(t.border).child(div().w(20).rounded(0).bg(t.accent)).child(div().w(16).rounded(0).bg(t.raised)).child(div().w(16).rounded(0).bg(t.raised)))
+          .child(
+            row()
+              .h(11)
+              .gap(2)
+              .p(2)
+              .border_b(1)
+              .border_color(t.border)
+              .child(div().w(20).rounded(0).bg(t.accent))
+              .child(div().w(16).rounded(0).bg(t.raised))
+              .child(div().w(16).rounded(0).bg(t.raised)),
+          )
           .child(row().flex_1().p(4).gap(3).child(term()).child(term())),
       );
   if (name === "terminals") {
-    const card = () => col().flex_1().rounded(0).border_1().border_color("#2c2f34").bg("#17191c").child(row().h(7).px(3).items_center().border_b(1).border_color("#25282c").child(line(14, "#5d6168")));
+    const card = () =>
+      col()
+        .flex_1()
+        .rounded(0)
+        .border_1()
+        .border_color("#2c2f34")
+        .bg("#17191c")
+        .child(
+          row()
+            .h(7)
+            .px(3)
+            .items_center()
+            .border_b(1)
+            .border_color("#25282c")
+            .child(line(14, "#5d6168")),
+        );
     return frame(col())
       .bg("#131619")
       .p(4)
       .gap(4)
-      .child(row().h(10).gap(3).p(1).rounded(0).bg("#1d1f22").child(div().w(30).rounded(0).bg("#34373c").border_1().border_color("#4a4d53")).child(div().w(30)))
+      .child(
+        row()
+          .h(10)
+          .gap(3)
+          .p(1)
+          .rounded(0)
+          .bg("#1d1f22")
+          .child(div().w(30).rounded(0).bg("#34373c").border_1().border_color("#4a4d53"))
+          .child(div().w(30)),
+      )
       .child(row().flex_1().gap(4).child(card()).child(card()));
   }
   // A layout of the person's own: a plain frame.
-  return frame(col()).child(row().h(11).border_b(1).border_color(t.border)).child(row().flex_1().p(4).child(term()));
+  return frame(col())
+    .child(row().h(11).border_b(1).border_color(t.border))
+    .child(row().flex_1().p(4).child(term()));
 }
 
 function layoutPicker(view, t, cx) {
@@ -83,7 +125,11 @@ function layoutPicker(view, t, cx) {
               .w_full()
               .child(
                 view.previews[name]
-                  ? image(view.previews[name]).size_full().rounded(0).border_1().border_color(t.border)
+                  ? image(view.previews[name])
+                      .size_full()
+                      .rounded(0)
+                      .border_1()
+                      .border_color(t.border)
                   : preview(t, name),
               ),
           )
@@ -91,7 +137,12 @@ function layoutPicker(view, t, cx) {
             h_flex()
               .gap(5)
               .items_center()
-              .child(div().text_size(12.5).text_color(on ? t.foreground : t.muted).child(LOOKS[name] ?? name.charAt(0).toUpperCase() + name.slice(1)))
+              .child(
+                div()
+                  .text_size(12.5)
+                  .text_color(on ? t.foreground : t.muted)
+                  .child(LOOKS[name] ?? name.charAt(0).toUpperCase() + name.slice(1)),
+              )
               .when(on, (el) => el.child(svg(I("check")).size(12).text_color(t.accent))),
           );
       }),
@@ -116,8 +167,12 @@ function appearancePicker(view, t, cx) {
           .rounded(0)
           .text_size(13)
           .cursor_pointer()
-          .when(now === value, (el) => el.bg(t.raised).text_color(t.foreground).border_1().border_color(t.border))
-          .when(now !== value, (el) => el.text_color(t.muted).hover((s) => s.text_color(t.foreground)))
+          .when(now === value, (el) =>
+            el.bg(t.raised).text_color(t.foreground).border_1().border_color(t.border),
+          )
+          .when(now !== value, (el) =>
+            el.text_color(t.muted).hover((s) => s.text_color(t.foreground)),
+          )
           .on_click((_e, cx) =>
             view.change((p) => {
               if (value === null) delete p.appearance;
@@ -139,45 +194,62 @@ function themePicker(t, light) {
     .children(
       // A theme named like a layout (themes/win98.json) is that layout's own.
       themes()
-        .filter((x) => Boolean(x.light) === light && (x.name === shared("layout") || !layouts().includes(x.name)))
+        .filter(
+          (x) =>
+            Boolean(x.light) === light &&
+            (x.name === shared("layout") || !layouts().includes(x.name)),
+        )
         .map(({ name, colors: c }) => {
-        const on = name === current;
-        const dot = (color) => div().w(8).h(8).rounded(0).bg(color);
-        return v_flex()
-          .id(`st-t-${name}`)
-          .w(124)
-          .gap(6)
-          .p(6)
-          .rounded(0)
-          .border_2()
-          .border_color(on ? t.accent : "#00000000")
-          .cursor_pointer()
-          .hover((s) => s.bg(t.raised))
-          .on_click((_e, cx) => {
-            run("app.theme", { name });
-            cx.notify();
-          })
-          .child(
-            v_flex()
-              .h(46)
-              .w_full()
-              .p(7)
-              .gap(6)
-              .rounded(0)
-              .border_1()
-              .border_color(t.border)
-              .bg(c.background)
-              .child(div().h(4).w(44).rounded(0).bg(c.terminal_foreground))
-              .child(h_flex().gap(4).child(dot(c.accent)).child(dot(c.ansi1)).child(dot(c.ansi2)).child(dot(c.ansi3)).child(dot(c.ansi5))),
-          )
-          .child(
-            h_flex()
-              .gap(5)
-              .items_center()
-              .child(div().text_size(12.5).text_color(on ? t.foreground : t.muted).child(name.replace(/-/g, " ")))
-              .when(on, (el) => el.child(svg(I("check")).size(12).text_color(t.accent))),
-          );
-      }),
+          const on = name === current;
+          const dot = (color) => div().w(8).h(8).rounded(0).bg(color);
+          return v_flex()
+            .id(`st-t-${name}`)
+            .w(124)
+            .gap(6)
+            .p(6)
+            .rounded(0)
+            .border_2()
+            .border_color(on ? t.accent : "#00000000")
+            .cursor_pointer()
+            .hover((s) => s.bg(t.raised))
+            .on_click((_e, cx) => {
+              run("app.theme", { name });
+              cx.notify();
+            })
+            .child(
+              v_flex()
+                .h(46)
+                .w_full()
+                .p(7)
+                .gap(6)
+                .rounded(0)
+                .border_1()
+                .border_color(t.border)
+                .bg(c.background)
+                .child(div().h(4).w(44).rounded(0).bg(c.terminal_foreground))
+                .child(
+                  h_flex()
+                    .gap(4)
+                    .child(dot(c.accent))
+                    .child(dot(c.ansi1))
+                    .child(dot(c.ansi2))
+                    .child(dot(c.ansi3))
+                    .child(dot(c.ansi5)),
+                ),
+            )
+            .child(
+              h_flex()
+                .gap(5)
+                .items_center()
+                .child(
+                  div()
+                    .text_size(12.5)
+                    .text_color(on ? t.foreground : t.muted)
+                    .child(name.replace(/-/g, " ")),
+                )
+                .when(on, (el) => el.child(svg(I("check")).size(12).text_color(t.accent))),
+            );
+        }),
     );
 }
 
@@ -208,7 +280,9 @@ function fontButton(view, t, which, family) {
 
 function fontList(view, t, which, def) {
   const q = view.filter.toLowerCase();
-  const matches = fonts().filter((f) => f.toLowerCase().includes(q)).slice(0, 200);
+  const matches = fonts()
+    .filter((f) => f.toLowerCase().includes(q))
+    .slice(0, 200);
   const choose = (name, cx) => {
     view.change((p) => {
       if (name === null) delete p[which];
@@ -228,42 +302,49 @@ function fontList(view, t, which, def) {
       .hover((s) => s.bg(t.hover))
       .on_click(onClick)
       .child(div().font_family(family).text_size(13.5).text_color(t.foreground).child(label));
-  return v_flex()
-    .w_full()
-    .mb(8)
-    .rounded(0)
-    .border_1()
-    .border_color(t.border)
-    .bg(t.background)
-    // Let the child's native scroll run before stopping the page's wheel event.
-    .on_scroll_wheel((_e, cx) => cx.stop_propagation())
-    .child(
-      div()
-        .px(12)
-        .py(8)
-        .border_b(1)
-        .border_color(t.border)
-        .text_size(13)
-        .relative()
-        .child(view.inputGlow.layer())
-        .child(Input.new(view.fontInput).h(28).text_color(t.foreground)),
-    )
-    .child(
-      div()
-        .id(`st-fl-${which}`)
-        .h(200)
-        .p(4)
-        .overflow_y_scrollbar()
-        .when(!q, (el) => el.child(item(`st-fd-${which}`, `Default (${def})`, def, (_e, cx) => choose(null, cx))))
-        .children(matches.map((f, i) => item(`st-fi-${which}-${i}`, f, f, (_e, cx) => choose(f, cx)))),
-    );
+  return (
+    v_flex()
+      .w_full()
+      .mb(8)
+      .rounded(0)
+      .border_1()
+      .border_color(t.border)
+      .bg(t.background)
+      // Let the child's native scroll run before stopping the page's wheel event.
+      .on_scroll_wheel((_e, cx) => cx.stop_propagation())
+      .child(
+        div()
+          .px(12)
+          .py(8)
+          .border_b(1)
+          .border_color(t.border)
+          .text_size(13)
+          .relative()
+          .child(view.inputGlow.layer())
+          .child(Input.new(view.fontInput).h(28).text_color(t.foreground)),
+      )
+      .child(
+        div()
+          .id(`st-fl-${which}`)
+          .h(200)
+          .p(4)
+          .overflow_y_scrollbar()
+          .when(!q, (el) =>
+            el.child(item(`st-fd-${which}`, `Default (${def})`, def, (_e, cx) => choose(null, cx))),
+          )
+          .children(
+            matches.map((f, i) => item(`st-fi-${which}-${i}`, f, f, (_e, cx) => choose(f, cx))),
+          ),
+      )
+  );
 }
 
 export function look(view, t, cx) {
   const s = settings();
   const p = view.person;
   const own = (key, composed, def) => (p[key] ?? def) !== composed;
-  const size = (key, value, d, cx) => view.change((q) => (q[key] = Math.max(8, Math.min(32, (q[key] ?? value) + d))), cx);
+  const size = (key, value, d, cx) =>
+    view.change((q) => (q[key] = Math.max(8, Math.min(32, (q[key] ?? value) + d))), cx);
   const fontRow = (which, sizeKey, title, family, def, sizeNow) =>
     v_flex()
       .w_full()
@@ -277,7 +358,17 @@ export function look(view, t, cx) {
             .items_center()
             .child(fontButton(view, t, which, family))
             // The panels' text follows zoom: they size their rows to it.
-            .when(Boolean(sizeKey), (el) => el.child(stepper(t, `st-${sizeKey}`, `${Math.round(sizeNow)}`, (_e, cx) => size(sizeKey, sizeNow, -1, cx), (_e, cx) => size(sizeKey, sizeNow, 1, cx)))),
+            .when(Boolean(sizeKey), (el) =>
+              el.child(
+                stepper(
+                  t,
+                  `st-${sizeKey}`,
+                  `${Math.round(sizeNow)}`,
+                  (_e, cx) => size(sizeKey, sizeNow, -1, cx),
+                  (_e, cx) => size(sizeKey, sizeNow, 1, cx),
+                ),
+              ),
+            ),
         ),
       )
       .when(view.picking === which, (el) => el.child(fontList(view, t, which, def)));
@@ -287,8 +378,22 @@ export function look(view, t, cx) {
     .child(layoutPicker(view, t, cx))
     .child(div().h(18))
     .child(heading(t, "Theme"))
-    .child(row(t, "Appearance", "Light or dark, or as your system is now.", appearancePicker(view, t, cx)))
-    .child(div().pt(12).pb(8).text_size(12.5).text_color(t.dim).child("For the layout you're in: each layout keeps its own light and dark theme."))
+    .child(
+      row(
+        t,
+        "Appearance",
+        "Light or dark, or as your system is now.",
+        appearancePicker(view, t, cx),
+      ),
+    )
+    .child(
+      div()
+        .pt(12)
+        .pb(8)
+        .text_size(12.5)
+        .text_color(t.dim)
+        .child("For the layout you're in: each layout keeps its own light and dark theme."),
+    )
     .child(div().pb(6).text_size(12.5).font_medium().text_color(t.muted).child("Dark"))
     .child(themePicker(t, false))
     .child(div().pt(10).pb(6).text_size(12.5).font_medium().text_color(t.muted).child("Light"))
@@ -303,7 +408,15 @@ export function look(view, t, cx) {
         h_flex()
           .gap(8)
           .items_center()
-          .child(stepper(t, "st-zoom", `${Math.round(s.zoom * 100)}%`, () => run("app.zoom_out"), () => run("app.zoom_in")))
+          .child(
+            stepper(
+              t,
+              "st-zoom",
+              `${Math.round(s.zoom * 100)}%`,
+              () => run("app.zoom_out"),
+              () => run("app.zoom_in"),
+            ),
+          )
           .child(button(t, "st-zoom-reset", "Reset", () => run("app.zoom_reset"))),
       ),
     )

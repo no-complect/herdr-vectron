@@ -21,7 +21,7 @@ const FILES = {
   "license.md": "license",
   ".gitignore": "git",
   ".gitattributes": "git",
-  ".gitmodules": "git"
+  ".gitmodules": "git",
 };
 const EXTENSIONS = {
   "ts": "typescript",
@@ -73,11 +73,15 @@ const EXTENSIONS = {
   "vue": "vue",
   "svelte": "svelte",
   "kt": "kotlin",
-  "swift": "swift"
+  "swift": "swift",
 };
 
 export function fileAppearance(path) {
   const name = path.split("/").pop().toLowerCase();
-  const icon = name.endsWith(".d.ts") ? "typescript-def" : name.startsWith(".env.") ? "config" : FILES[name] ?? EXTENSIONS[name.split(".").pop()] ?? "_file";
+  const icon = name.endsWith(".d.ts")
+    ? "typescript-def"
+    : name.startsWith(".env.")
+      ? "config"
+      : (FILES[name] ?? EXTENSIONS[name.split(".").pop()] ?? "_file");
   return { icon };
 }
