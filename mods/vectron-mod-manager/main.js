@@ -62,7 +62,7 @@ const HINTS = {
 
 // Windows: Herdr's PATH has Git's git but not the Unix tools that come with it, and `find`
 // there is Windows' find.exe. Run those from Git's usr/bin (found through git --exec-path).
-const UNIX_TOOLS = new Set(["find", "ls", "rm", "cp", "mkdir"]);
+const UNIX_TOOLS = new Set(["find", "ls", "rm", "cp", "mkdir", "mv", "test"]);
 let unixBin = null;
 async function exec(cmd, args, opts) {
   if (UNIX_TOOLS.has(cmd) && win()?.platform === "windows") {
@@ -82,9 +82,7 @@ async function exec(cmd, args, opts) {
 const io = {
   exec: (cmd, args, opts) => exec(cmd, args, opts),
   readText: (path) => readTextFile(path),
-  async writeText(path, text) {
-    await writeTextFile(path, text, await readTextFile(path));
-  },
+  writeText: (path, text, previous) => writeTextFile(path, text, previous),
 };
 
 const anonymous = async (url) => {
@@ -337,16 +335,13 @@ export default class ModManager extends View {
         ...records().filter((x) => !(x.source === rec.source && x.prefix === rec.prefix)),
         rec,
       ]);
-      const failures = await core.checkMods(io, appHome(), rec.mods);
       const verb = r.record ? "updated" : "installed";
-      this.message = failures.length
-        ? `${r.pkg.name} ${verb}, but herdr-app check failed on ${failures.map((f) => f.mod).join(", ")}: ${failures[0].error.split("\n")[0]}`
-        : `${r.pkg.name} ${verb} (${rec.mods.join(", ")})${rec.layouts.length ? `; layouts: ${rec.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
-      this.level = failures.length ? "error" : "ok";
+      this.message = `${r.pkg.name} ${verb} (${rec.mods.join(", ")})${rec.layouts.length ? `; layouts: ${rec.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
+      this.level = "ok";
       notify({
         title: `mod ${verb}`,
         body: this.message,
-        level: failures.length ? "warning" : "success",
+        level: "success",
       });
       this.updates[rec.source] = null;
       await this.finishReview();

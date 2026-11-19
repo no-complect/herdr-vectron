@@ -118,7 +118,7 @@ export async function planInstall(
       const current = mine[section]?.[key];
       const own = ownKeys.get(`${section}\u0000${key}`);
       if (current === undefined || current === action || (own !== undefined && current === own)) {
-        if (current !== action) keyAdds.push({ section, key, action });
+        if (current !== action) keyAdds.push({ section, key, action, previous: current });
       } else {
         keyConflicts.push({ section, key, action, current });
       }
@@ -138,33 +138,104 @@ export async function planInstall(
 
 async function writeKeys(io, appHome, change) {
   const path = `${appHome}/keys.json`;
-  const keys = parseKeys(await io.readText(path));
+  const previous = await io.readText(path);
+  const keys = parseKeys(previous);
   change(keys);
-  await io.writeText(path, JSON.stringify(keys, null, 2) + "\n");
+  await io.writeText(path, JSON.stringify(keys, null, 2) + "\n", previous);
 }
 
-// Copies the package and adds its keys. Conflicting keys are left as the person has them. On an
-// update, the package's previous folders are removed first, and only those.
+const packagePaths = ({ mods = [], layouts = [] }) => [
+  ...mods.map((name) => `mods/${name}`),
+  ...layouts.map((name) => `layouts/${name}`),
+];
+
+async function pathExists(io, path) {
+  const found = await io.exec("test", ["-e", path, "-o", "-L", path]);
+  if (found.code === 0 || found.code === 1) return found.code === 0;
+  throw new Error(`Could not check whether ${path} exists.`);
+}
+
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record }) {
   if (plan.clashes.length) throw new Error(`already exists: ${plan.clashes.join(", ")}`);
-  for (const m of record?.mods ?? []) await run(io, "rm", ["-rf", `${appHome}/mods/${m}`]);
-  for (const l of record?.layouts ?? []) await run(io, "rm", ["-f", `${appHome}/layouts/${l}`]);
-  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`]);
-  for (const m of plan.mods)
-    await run(io, "cp", ["-R", `${plan.base}/mods/${m}`, `${appHome}/mods/${m}`]);
-  for (const l of plan.layouts)
-    await run(io, "cp", [`${plan.base}/layouts/${l}`, `${appHome}/layouts/${l}`]);
+
+  // One installer at a time. Keep the staging directory on the config filesystem
+  // so each replacement and backup can be moved without copying it a second time.
+  const staging = `${appHome}/.mod-manager-install`;
+  const incoming = `${staging}/incoming`;
+  const backup = `${staging}/backup`;
+  const previousFiles = new Set(packagePaths(record ?? {}));
+  const incomingFiles = new Set(packagePaths(plan));
+  const changes = [];
+  let keepBackups = false;
+
+  await run(io, "mkdir", [staging]);
+  try {
+    await run(io, "mkdir", [
+      "-p",
+      ...[incoming, backup, appHome].flatMap((dir) => [`${dir}/mods`, `${dir}/layouts`]),
+    ]);
+    for (const path of incomingFiles) {
+      const flags = path.startsWith("mods/") ? ["-R"] : [];
+      await run(io, "cp", [...flags, `${plan.base}/${path}`, `${incoming}/${path}`]);
+    }
+    for (const mod of plan.mods) {
+      const check = await io.exec("herdr-app", ["check", `${incoming}/mods/${mod}`]);
+      if (check.code !== 0) {
+        const detail = (check.stderr || check.stdout || "").trim().split("\n")[0];
+        throw new Error(`herdr-app check failed on ${mod}${detail ? `: ${detail}` : ""}`);
+      }
+    }
+
+    for (const path of new Set([...previousFiles, ...incomingFiles])) {
+      const live = `${appHome}/${path}`;
+      const present = await pathExists(io, live);
+      if (present && !previousFiles.has(path)) throw new Error(`already exists: ${path}`);
+
+      const change = { path, saved: false, added: false };
+      changes.push(change);
+      if (present) {
+        await run(io, "mv", [live, `${backup}/${path}`]);
+        change.saved = true;
+      }
+      if (incomingFiles.has(path)) {
+        await run(io, "mv", [`${incoming}/${path}`, live]);
+        change.added = true;
+      }
+    }
+
+    if (plan.keyAdds.length) {
+      await writeKeys(io, appHome, (keys) => {
+        for (const { section, key, action, previous } of plan.keyAdds) {
+          const bindings = (keys[section] ??= {});
+          if (bindings[key] !== previous)
+            throw new Error(`Shortcut ${key} in ${section} changed. Review the package again.`);
+          bindings[key] = action;
+        }
+      });
+    }
+  } catch (error) {
+    for (const { path, added, saved } of changes.reverse()) {
+      const live = `${appHome}/${path}`;
+      try {
+        if (added) await run(io, "rm", ["-rf", live]);
+        if (saved) await run(io, "mv", [`${backup}/${path}`, live]);
+      } catch {
+        keepBackups = true;
+      }
+    }
+    if (keepBackups)
+      throw new Error(`${error.message}\nRollback was incomplete. Backups are in ${backup}.`);
+    throw error;
+  } finally {
+    if (!keepBackups) await io.exec("rm", ["-rf", staging]).catch(() => null);
+  }
+
   const keys = [
     ...(record?.keys ?? []).filter(
       (k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key),
     ),
     ...plan.keyAdds,
   ];
-  if (plan.keyAdds.length) {
-    await writeKeys(io, appHome, (all) => {
-      for (const k of plan.keyAdds) (all[k.section] ??= {})[k.key] = k.action;
-    });
-  }
   return {
     source,
     prefix,
@@ -179,17 +250,10 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
 
 function dedupeKeys(keys) {
   const seen = new Map();
-  for (const k of keys) seen.set(`${k.section}\u0000${k.key}`, k);
-  return [...seen.values()];
-}
-
-export async function checkMods(io, appHome, mods) {
-  const failures = [];
-  for (const m of mods) {
-    const r = await io.exec("herdr-app", ["check", `${appHome}/mods/${m}`]);
-    if (r.code !== 0) failures.push({ mod: m, error: (r.stderr || r.stdout).trim() });
+  for (const { section, key, action } of keys) {
+    seen.set(`${section}\u0000${key}`, { section, key, action });
   }
-  return failures;
+  return [...seen.values()];
 }
 
 // Removes what the record says the manager installed. A key is removed only while it still runs
