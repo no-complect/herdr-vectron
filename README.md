@@ -23,10 +23,11 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 | ⌘P | Find a tab, space, or agent |
 | ⌘⇧P | Search commands |
 | ⌘1–9 and Ctrl+1–9 | Select a space or agent |
+| Shift+F2 or right-click a space → Rename | Rename a space |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
 | Context → Expand | Open the larger inspector |
 
-The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update.
+The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming uses the command palette's typing flash.
 
 ## Development
 
