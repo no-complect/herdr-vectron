@@ -824,3 +824,41 @@ test("AI usage pauses automatic polling while idle and resumes when an agent is 
   await queue.flush();
   assert.equal(requests, 2);
 });
+
+test("the Vectron usage meter uses vector styling and flashes only on live changes", async () => {
+  const source = { id: "codex", provider: "codex", icon: "codex.png", agent: "Codex", label: "codex" };
+  const t = { ...colorTheme, working: "#72dac0", dim: "#8499b3", blocked: "#ff5775" };
+  const state = { list: [source], idle: false };
+  const usage = { fetched: new Date().toISOString(), windows: [{ short: "7d", used: 25 }] };
+  const { default: AiUsage } = await loadMod("vectron-ai-usage", "main.js", {
+    herdr: {
+      agents: noop, exec: noop, focused: noop, home: noop, panes: noop, readTextFile: noop,
+      shared: (key) => key.endsWith(".shown") ? state : usage,
+      props: () => ({ compact: true }), setShared: noop, openOverlay: noop, settings: noop, theme: () => t,
+    },
+  });
+  const flashes = [];
+  const cx = { notify: noop, spawn: (body) => flashes.push(body), timer: { every: noop } };
+  const view = new AiUsage();
+  view.init({}, cx);
+  view.narrow = false;
+  const gauge = () => view.compact(cx);
+  const fill = (tree, width) => find(tree, (el) => el.calls.w?.[0] === width);
+  const first = gauge();
+  assert.equal(find(first, (el) => el.kind === "svg").args[0], "mods/vectron-icons/codex.svg");
+  assert.equal(fill(first, "25%").calls.bg[0], t.working);
+  assert.equal(flashes.length, 0);
+
+  usage.windows[0].used = 82;
+  const updated = gauge();
+  assert.equal(fill(updated, "82%").calls.bg[0], t.accent);
+  assert.ok(find(updated, (el) => el.calls.id?.[0]?.startsWith("vector-flash-usage-codex-7d")));
+  gauge();
+  assert.equal(flashes.length, 1);
+
+  state.idle = true;
+  assert.equal(fill(gauge(), "82%").calls.bg[0], t.dim);
+  state.idle = false;
+  gauge();
+  assert.equal(flashes.length, 1);
+});

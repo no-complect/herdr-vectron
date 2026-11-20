@@ -23,7 +23,8 @@ async function topBar(agents) {
     herdr: {
       agents: () => state.agents,
       focused: () => state.focus,
-      layout: noop, window: noop, home: noop, readTextFile: noop, appHome: noop, exec: noop,
+      layout: () => state.layout, window: () => state.window,
+      home: noop, readTextFile: noop, appHome: noop, exec: noop,
       spaces: () => [{ id: "other", active: true, name: "Other space", tabs: [] }],
       props: () => ({ part: "left" }),
       theme: () => ({ blocked: "#ff5775", done: "#7ab5ff" }),
@@ -144,4 +145,18 @@ test("cabinet starts on the first measured bar, draws the logo, then sweeps once
   const other = start();
   measure(other.render(cx));
   assert.equal(byId(other.render(cx), "cabinet-logo-reveal"), undefined);
+});
+
+test("the usage meter gives up only the width needed for window controls", async () => {
+  const { cx, frame, state, actions } = await topBar([]);
+  state.layout = { children: [{ id: "bar-right", size: { weight: 3 } }] };
+  state.window = { platform: "macos", buttons: false };
+  const measure = () => frame().calls.on_size_change[0]({ width: 590 }, cx);
+  measure();
+  assert.deepEqual(actions.pop(), ["layout.resize", { id: "bar-right", px: 0 }]);
+
+  state.layout.children[0].size = { px: 0 };
+  state.window.buttons = true;
+  measure();
+  assert.deepEqual(actions.pop(), ["layout.resize", { id: "bar-right", px: 90 }]);
 });

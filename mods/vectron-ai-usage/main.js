@@ -16,6 +16,7 @@ import {
 
 import { PROVIDERS, sourcesFor, fetchUsage } from "./providers.js";
 import { clock, pace, resets, resetsShort } from "./time.js";
+import { Flash } from "./beam.js";
 
 const MOD = "vectron-ai-usage";
 const keyOf = (id) => `${MOD}.${id}`;
@@ -27,6 +28,21 @@ const AMBER = "#ffb347",
   RED = "#ff5d6c";
 const POPUP_W = 320,
   GAP = 6;
+const vectorIcons = {
+  codex: "codex",
+  claude: "claude",
+  "claude-code": "claude",
+  grok: "grok",
+  "grok-build": "grok",
+  agy: "antigravity",
+};
+const windowKey = (s, w) => `usage-${s.id}-${w.short}`;
+
+function vectorColor(w, stale, t) {
+  if (stale) return t.dim;
+  if (w.used >= 95) return t.blocked;
+  return w.used >= 80 ? t.accent : t.working;
+}
 
 async function refreshOne(src) {
   if (!src.provider) return;
@@ -71,6 +87,9 @@ function visible() {
 }
 
 export default class AiUsage extends View {
+  usageFlash = new Flash();
+  usageValues = new Map();
+
   init(_props, cx) {
     if (props()?.overlay) return;
     this.sig = null;
@@ -130,7 +149,7 @@ export default class AiUsage extends View {
   render(cx) {
     if (props()?.overlay) return this.details();
     this.sync(cx);
-    return props()?.compact ? this.compact() : this.bar();
+    return props()?.compact ? this.compact(cx) : this.bar();
   }
 
   // Bottom bar: popup sits above, card pinned to its bottom. Top bar: below, pinned to its top.
@@ -281,8 +300,28 @@ export default class AiUsage extends View {
       .child(v_flex().gap(2).children(rows));
   }
 
-  // 330px: one provider gets label, bar and two windows; two drop the label; more keep one window each.
-  compact() {
+  flashUsage(rows, t, cx) {
+    const values = new Map();
+    const targets = new Map();
+    for (const { source, windows, stale } of rows) {
+      if (stale) continue;
+      for (const window of windows) {
+        const id = windowKey(source, window);
+        const used = clamp(window.used);
+        values.set(id, used);
+        const previous = this.usageValues.get(id);
+        if (previous !== undefined && previous !== used) targets.set(id, vectorColor(window, false, t));
+      }
+    }
+    this.usageValues = values;
+
+    for (const key of this.usageFlash.burst?.targets.keys() ?? []) {
+      if (!values.has(key)) this.usageFlash.burst.targets.delete(key);
+    }
+    this.usageFlash.start(cx, targets, { alreadyRendering: true });
+  }
+
+  compact(cx) {
     const t = theme(),
       list = shownList(),
       idle = shared(SHOWN)?.idle;
@@ -290,26 +329,33 @@ export default class AiUsage extends View {
     const n = list.length;
     // Icon, then each window (5h, 7d) as its label, a bar and the percent. The popup has the rest.
     const barW = n === 1 ? 70 : n === 2 ? 48 : 32;
-    const segs = list.map((s) => {
-      const u = shared(keyOf(s.id));
-      const stale = idle || isStale(u);
-      const [first, second] = u?.windows ?? [];
+    const rows = list.map((source) => {
+      const u = shared(keyOf(source.id));
+      return { source, u, stale: idle || isStale(u), windows: (u?.windows ?? []).slice(0, 2) };
+    });
+    this.flashUsage(rows, t, cx);
+    const segs = rows.map(({ source: s, u, stale, windows }) => {
+      const icon = vectorIcons[s.provider ?? s.id.replace(/^none\./, "")] ?? "terminal";
       const win = (w) => {
-        const c = color(w, stale, t, s);
+        const c = vectorColor(w, stale, t);
+        const key = windowKey(s, w);
         return (
           h_flex()
             .gap(5)
             .items_center()
             .flex_none()
-            .child(div().whitespace_nowrap().text_color(t.dim).child(w.short))
+            .child(div().whitespace_nowrap().text_color(t.muted).child(w.short))
             // Narrow windows: no bar, the percent carries the color instead.
             .when(!narrow, (el) =>
               el.child(
                 div()
                   .relative()
                   .w(barW)
-                  .h(6)
-                  .bg(t.border)
+                  .h(8)
+                  .border(1)
+                  .border_color(t.border)
+                  .bg(t.surface)
+                  .overflow_hidden()
                   .child(
                     div()
                       .absolute()
@@ -318,13 +364,20 @@ export default class AiUsage extends View {
                       .h_full()
                       .w(`${clamp(w.used)}%`)
                       .bg(c),
-                  ),
+                  )
+                  .child(this.usageFlash.layer(key, "fill")),
               ),
             )
             .child(
               div()
+                .relative()
                 .whitespace_nowrap()
-                .text_color(narrow || stale || w.used >= 80 ? c : t.muted)
+                .font_semibold()
+                .text_color(c)
+                .when(narrow, (el) => el.child(
+                  div().absolute().left(0).right(0).bottom(0).h(2)
+                    .child(this.usageFlash.layer(key, "fill")),
+                ))
                 .child(`${w.used}%`),
             )
         );
@@ -334,7 +387,10 @@ export default class AiUsage extends View {
           .gap(6)
           .items_center()
           .flex_none()
-          .child(this.icon(s, 12, stale))
+          .child(
+            svg(`mods/vectron-icons/${icon}.svg`)
+              .size(14).flex_none().text_color(stale ? t.dim : t.accent),
+          )
           // The profile's name, so a work and a personal Claude tell apart.
           .when(s.provider === "claude", (el) =>
             el.child(
@@ -344,7 +400,7 @@ export default class AiUsage extends View {
                 .child(s.label),
             ),
           )
-          .when(Boolean(s.note) || !first, (el) =>
+          .when(Boolean(s.note) || !windows.length, (el) =>
             el.child(
               div()
                 .whitespace_nowrap()
@@ -352,8 +408,7 @@ export default class AiUsage extends View {
                 .child(s.note ?? (u?.error ? "no data" : u?.fetched ? "no limits" : "…")),
             ),
           )
-          .when(Boolean(first), (el) => el.child(win(first)))
-          .when(Boolean(second), (el) => el.child(win(second)))
+          .children(windows.map(win))
       );
     });
     // The same │ the bar puts between space and folder, only between segments.
@@ -362,7 +417,7 @@ export default class AiUsage extends View {
       .justify_end()
       .px(10)
       .gap(narrow ? 10 : 14)
-      .text_size(11)
+      .text_size(12)
       .children(segs.flatMap((seg, i) => (i ? [sep(i), seg] : [seg])));
   }
 
