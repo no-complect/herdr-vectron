@@ -75,6 +75,8 @@ export async function loadMod(mod, file = "main.js", overrides = {}, globals = {
       EditorState: { new: (options) => ({ options, release() {} }) },
       Editor: { new: element("editor") },
       Scrollbar: { vertical: element("scrollbar") },
+      ScrollHandle: { new: () => ({ scroll_to_item() {}, release() {} }) },
+      VirtualListScrollHandle: { new: () => ({ scroll_to_item() {}, release() {} }) },
       ...overrides["gpui-base"],
     },
     ...Object.fromEntries(
