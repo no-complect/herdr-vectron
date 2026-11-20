@@ -11,10 +11,11 @@
 
 import { View, div, svg } from "gpui-kit";
 import { h_flex, InputState, Input } from "gpui-base";
-import { panes, props, run, theme, home, exec, layout, shared, setShared, window } from "herdr";
+import { focused, panes, props, run, theme, home, exec, layout, shared, setShared, window } from "herdr";
 import { act, readLive, watchLive, touches } from "./browser/client.js";
 import { Flash, flashColor } from "./beam.js";
 import { programIcon } from "./program-icon.js";
+import { FocusTrail } from "./focus-trail.js";
 
 // Keyboard navigation (keynav protocol, as in the other vectron mods' keynav.js): while a driver
 // such as whistle has the terminal field selected, the pane it points at lights up its header.
@@ -56,6 +57,8 @@ const MOD = "mods/vectron-pane";
 const BROWSER = MOD + "/browser";
 
 export default class Pane extends View {
+  focusTrail = new FocusTrail();
+
   init(_props, cx) {
     this.hovered = false;
     this.terminal = props()?.terminal || null;
@@ -92,6 +95,7 @@ export default class Pane extends View {
 
   async close() {
     this.closed = true;
+    this.focusTrail.clear();
     if (!this.live) return;
     this.hideNotes();
     await act(this.terminal, "native", { on: false });
@@ -404,8 +408,18 @@ export default class Pane extends View {
   render(cx) {
     const t = theme();
     const p = this.me();
-    if (!p) return div();
-    if (this.live && p.terminal === this.terminal) return this.browserHeader(t, p);
+    if (!p) {
+      this.focusTrail.clear();
+      return div();
+    }
+    const focus = focused();
+    this.focusTrail.update(focus?.tab === p.tab ? p.tab : null, focus?.pane);
+    const trail = p.focused ? null : this.focusTrail.layer(p.pane, t.ansi6, cx);
+    if (this.live && p.terminal === this.terminal) {
+      return this.browserHeader(t, p)
+        .relative()
+        .when(Boolean(trail), (el) => el.child(trail));
+    }
     this.updateHeaderFlash(p, t, cx);
     // The icon names the program; the header says what it works on: its title, else the folder.
     const clean = (p.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -443,6 +457,7 @@ export default class Pane extends View {
         })
         .on_click(() => run("pane.focus", { pane }))
         .when(p.focused, (el) => el.child(this.headerFlash.layer("header")))
+        .when(Boolean(trail), (el) => el.child(trail))
         .when(Boolean(pic), (el) => el.child(pic))
         .child(
           div()
