@@ -16,6 +16,8 @@ For a manual install, copy the files from [layouts](layouts), the [mod folders](
 
     herdr-app do layout.switch '{"name":"vectron"}'
 
+Vectron’s Mod Manager includes packaged themes when it installs a layout. Tests and README media stay in the source checkout.
+
 Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and reads local agent session files. Its reported counts and estimates are labeled separately. Files and Changes run filesystem and Git commands in the selected workspace. The optional browser tools use Herdr Browser if installed. The usage panel reads supported login files and contacts the matching Claude, ChatGPT, or Copilot usage service when a corresponding agent is visible. The Mods screen and Git graph can query GitHub.
 
 ## Controls
