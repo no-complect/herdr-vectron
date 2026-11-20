@@ -555,6 +555,61 @@ test("a preview closed and reopened on the same event ignores the first request'
   assert.equal(view.details, "fresh preview");
 });
 
+test("Context keeps the two counts and percentage visible while Count details holds routine metadata", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const { context } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.shownTarget = "";
+  view.controlsFlash = { layer: noop, start: noop };
+  view.data = {
+    path: "/fixture/session.jsonl", model: "fixture-model", reported: { input: 95200, window: 475000 },
+    events: [{ id: "0", category: "user", tokens: 78400, segment: 0 }], files: 1,
+  };
+  const hasText = (tree, text) => Boolean(find(tree, (node) => node.nodes.includes(text)));
+  const routine = "Reported by the last model request; an in-flight turn may be ahead.";
+  const summary = view.render(context);
+  for (const text of ["LAST REPORTED INPUT", "95.2K", "20.0%", "CAPTURED TEXT · ESTIMATED", "~78.4K tokens"]) {
+    assert.ok(hasText(summary, text), text);
+  }
+  assert.equal(hasText(summary, "fixture-model"), false);
+  assert.equal(hasText(summary, routine), false);
+
+  const reveal = find(summary, (node) => node.calls.id?.[0] === "context-about");
+  assert.ok(reveal.nodes.includes("Count details"));
+  reveal.calls.on_click[0](null, context);
+  const details = find(view.render(context), (node) => node.calls.id?.[0] === "context-notes");
+  assert.ok(hasText(details, "Model · fixture-model"));
+  assert.ok(hasText(details, `Context window · ${(475000).toLocaleString()} tokens`));
+  assert.ok(hasText(details, routine));
+});
+
+test("Context leaves missing usage, unknown window, and partial transcript warnings in the collapsed view", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const view = new Inspector();
+  view.dataFlash = { layer: noop };
+  view.replayCutoff = null;
+  view.data = { partial_history: true, events: [] };
+  const hasText = (tree, text) => Boolean(find(tree, (node) => node.nodes.includes(text)));
+
+  assert.ok(hasText(view.gauge({ input: 95000, window: 475000 }), "Showing a partial transcript."));
+  assert.ok(hasText(view.gauge(null), "No usage sample was found within the read limit."));
+  assert.ok(hasText(view.gauge({ input: 200, window: 1000, before_retained_history: true }),
+    "Last recorded usage predates the retained history."));
+
+  view.data = { events: [{ id: "1" }], recorded_events: 6000 };
+  const grok = view.gauge({ input: 105900, kind: "context", label: "CONTEXT ESTIMATE" });
+  assert.ok(hasText(grok, "CONTEXT ESTIMATE"));
+  assert.ok(hasText(grok, "Window size not recorded"));
+  assert.ok(hasText(grok, "Showing a partial transcript."));
+  const olderGrok = view.gauge({ input: 105900, kind: "context", before_retained_history: true });
+  assert.ok(hasText(olderGrok, "Window size not recorded"));
+  assert.ok(hasText(olderGrok, "Last recorded usage predates the retained history."));
+  view.replayCutoff = 0;
+  assert.ok(hasText(view.gauge(null), "No usage sample is available at this replay point."));
+});
+
 test("Context meters retain their native pulse rates and flash only changed categories", async () => {
   const { default: Inspector } = await loadMod("vectron-context", "main.js", {
     herdr: contextHost,

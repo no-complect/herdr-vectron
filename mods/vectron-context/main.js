@@ -397,19 +397,21 @@ export default class ContextInspector extends View {
 
   gauge(usage) {
     const t = theme();
-    let note = "No model usage sample is recorded yet.";
-    if (usage?.before_retained_history) {
-      note = "Last recorded usage predates the retained history.";
-    } else if (usage?.kind === "context") {
-      note = "Grok's recorded context estimate; an in-flight turn may be ahead.";
-    } else if (usage) {
-      note = "Reported by the last model request; an in-flight turn may be ahead.";
-    } else if (this.replayCutoff != null) {
-      note = "No usage sample is available at this replay point.";
-    } else if (this.data?.partial_history) {
-      note = "No usage sample was found within the read limit.";
-    }
     const percent = usage?.window ? (usage.input / usage.window) * 100 : null;
+    const partial =
+      this.data?.partial_history || this.data?.recorded_events > (this.data?.events?.length ?? 0);
+    let warning = null;
+    if (!usage) {
+      warning = "No model usage sample is recorded yet.";
+      if (this.replayCutoff != null) {
+        warning = "No usage sample is available at this replay point.";
+      } else if (this.data?.partial_history) {
+        warning = "No usage sample was found within the read limit.";
+      }
+    } else if (usage.before_retained_history) {
+      warning = "Last recorded usage predates the retained history.";
+    }
+
     const barColor = this.usageBarColor(usage);
     const color = percent !== null && percent >= 75 ? barColor : t.accent;
     return v_flex()
@@ -429,45 +431,30 @@ export default class ContextInspector extends View {
               ),
           )
           .child(
-            div()
-              .text_size(22)
-              .font_semibold()
-              .text_color(color)
-              .child(usage ? formatCount(usage.input) : "—"),
-          ),
-      )
-      .child(
-        h_flex()
-          .justify_between()
-          .gap(8)
-          .text_size(11)
-          .text_color(t.dim)
-          .child(
-            div()
-              .flex_1()
-              .min_w(0)
-              .truncate()
-              .tooltip(this.data?.model || "")
-              .child(this.data?.model || "Model not recorded"),
-          )
-          .child(
-            div()
+            h_flex()
               .flex_none()
+              .items_end()
+              .gap(7)
               .child(
-                usage?.window
-                  ? `${formatCount(usage.window)} window · ${percent.toFixed(1)}%`
-                  : "Window size not recorded",
+                div()
+                  .text_size(22)
+                  .font_semibold()
+                  .text_color(color)
+                  .child(usage ? formatCount(usage.input) : "—"),
+              )
+              .when(percent !== null, (el) =>
+                el.child(div().text_size(11).text_color(t.muted).child(`${percent.toFixed(1)}%`)),
               ),
           ),
       )
-      .child(
-        div()
-          .h(5)
-          .w_full()
-          .rounded(2)
-          .bg(t.border)
-          .when(percent !== null, (el) =>
-            el.child(
+      .when(percent !== null, (el) =>
+        el.child(
+          div()
+            .h(5)
+            .w_full()
+            .rounded(2)
+            .bg(t.border)
+            .child(
               div()
                 .h_full()
                 .rounded(2)
@@ -477,14 +464,46 @@ export default class ContextInspector extends View {
                 .child(this.breathingFill("reported", barColor, 477))
                 .child(this.dataFlash.layer("reported", "fill")),
             ),
-          ),
+        ),
       )
-      .child(
-        div()
-          .text_size(10)
-          .text_color(t.dim)
-          .child(note),
+      .when(Boolean(usage) && percent === null, (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child("Window size not recorded")),
+      )
+      .when(Boolean(warning), (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child(warning)),
+      )
+      .when(Boolean(partial), (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child("Showing a partial transcript.")),
       );
+  }
+
+  countDetails(usage) {
+    const t = theme();
+    const model = this.data.model ? `Model · ${this.data.model}` : "Model not recorded";
+    const windowSize =
+      usage?.window
+        ? `Context window · ${usage.window.toLocaleString()} tokens`
+        : "Window size not recorded";
+    const explanation =
+      usage?.kind === "context"
+        ? "Grok's recorded context estimate; an in-flight turn may be ahead."
+        : "Reported by the last model request; an in-flight turn may be ahead.";
+    const details = [
+      model,
+      windowSize,
+      usage && explanation,
+      this.data.method,
+      "The category bar describes recorded text, not an exact live prompt. Compaction and unrecorded runtime data can make the reported total different.",
+      `Matched: ${this.data.match}. ${this.data.files} history file(s).`,
+      ...(this.data.notes || []),
+    ].filter(Boolean);
+
+    return v_flex()
+      .id("context-notes")
+      .max_h(145)
+      .overflow_y_scrollbar()
+      .gap(5)
+      .children(details.map((note) => div().text_size(10).text_color(t.dim).child(note)));
   }
 
   breakdown({ counts, sum }) {
@@ -1033,7 +1052,7 @@ export default class ContextInspector extends View {
               .child(
                 this.button(
                   "context-about",
-                  this.about ? "Hide count details" : "About these counts",
+                  this.about ? "Hide count details" : "Count details",
                   () => {
                     this.about = !this.about;
                   },
@@ -1042,23 +1061,7 @@ export default class ContextInspector extends View {
               .child(div().flex_1())
               .child(div().text_size(9).text_color(t.dim).child("Local · read-only")),
           )
-          .when(this.about, (e) =>
-            e.child(
-              v_flex()
-                .id("context-notes")
-                .max_h(145)
-                .overflow_y_scrollbar()
-                .gap(5)
-                .children(
-                  [
-                    this.data.method,
-                    "The category bar describes recorded text, not an exact live prompt. Compaction and unrecorded runtime data can make the reported total different.",
-                    `Matched: ${this.data.match}. ${this.data.files} history file(s).`,
-                    ...(this.data.notes || []),
-                  ].map((note) => div().text_size(10).text_color(t.dim).child(note)),
-                ),
-            ),
-          ),
+          .when(this.about, (el) => el.child(this.countDetails(usage))),
       );
   }
 }

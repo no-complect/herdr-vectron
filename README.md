@@ -29,6 +29,9 @@ In Context’s live **Since compact** view, a recorded Codex or Claude compactio
 | **+** in the tab bar | Start an agent. Type to filter the list. |
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
+| Context → Categories | Show the full category legend and filter by category |
+| Context → Select an event | Open its preview |
+| Context → Count details | See the model, window size, and how the counts were calculated |
 | Context → Expand | Open the larger inspector |
 | **History** in a focused terminal header | Return to live output. The header pulses when the terminal reaches the bottom. |
 
