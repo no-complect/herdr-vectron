@@ -35,6 +35,8 @@ The pane header flashes when a terminal gains focus or its selected agent starts
 
 In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
 
+Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space.
+
 ## Development
 
 Run `npm test` with Node.js 22 or later and Python 3.10 or later. The suites in

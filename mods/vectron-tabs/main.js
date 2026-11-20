@@ -26,6 +26,7 @@ import {
 import { resumeCommand, argvOf } from "./reopen.js";
 import { announce, isActive, entered, move, keepKeys } from "./keynav.js";
 import { programIcon } from "./program-icon.js";
+import { FocusTrail } from "./focus-trail.js";
 
 // The last closed tabs (newest last), kept across restarts for ctrl-alt-shift-t.
 const CLOSED = "vectron-tabs.closed";
@@ -57,6 +58,8 @@ function find(node, id) {
 }
 
 export default class Tabs extends View {
+  focusTrail = new FocusTrail();
+
   init(_props, cx) {
     this.hovered = false;
     if (_props?.pane) return;
@@ -88,6 +91,10 @@ export default class Tabs extends View {
         cx.notify();
       }
     });
+  }
+
+  close() {
+    this.focusTrail.clear();
   }
 
   track(cx) {
@@ -301,6 +308,7 @@ export default class Tabs extends View {
     const panel = find(root, "panel"),
       body = find(root, "panel-body");
     const activeTab = shown.find((tab) => tab.active)?.id;
+    this.focusTrail.update(space?.id, activeTab);
     const activePanel = panel?.hidden ? null : body?.active;
     const focus = focused();
     const selection = {
@@ -384,6 +392,7 @@ export default class Tabs extends View {
             .join(" · ");
       const flashKey = "tab-" + c.id;
       const pulse = this.flash.iconPulse(flashKey, t);
+      const trail = c.active ? null : this.focusTrail.layer(c.id, t.ansi6, cx);
       const icons = (multi ? programs.slice(0, 3) : [program])
         .map((p) => programIcon(p, 14, t.muted, pulse))
         .filter(Boolean);
@@ -413,6 +422,7 @@ export default class Tabs extends View {
           .when(c.active, (el) =>
             el.child(div().absolute().left(0).right(0).bottom(0).h(2).bg(t.accent)),
           )
+          .when(Boolean(trail), (el) => el.child(trail))
           .child(this.flash.layer(flashKey))
           // The keyboard cursor.
           .when(this.keyOn && this.cursor === c.id, (el) =>
