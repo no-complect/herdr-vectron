@@ -22,7 +22,7 @@ import {
   updates,
   run,
 } from "herdr";
-import { layoutLanes } from "./lanes.js";
+import { ancestryDepths, layoutLanes } from "./lanes.js";
 import {
   READ,
   STATUS,
@@ -209,6 +209,8 @@ const folderState = () => ({
   scope: null,
   moreAsked: null,
   selected: null,
+  ancestryReveal: null,
+  trace: null,
   details: null,
   diff: null,
 });
@@ -907,6 +909,13 @@ export class Graph {
       return;
     }
     this.selected = commit.hash;
+    const reveal = { hash: commit.hash, started: false };
+    this.ancestryReveal = reveal;
+    cx.timer.after(40, (cx) => {
+      if (this.ancestryReveal !== reveal || this.selected !== reveal.hash) return;
+      reveal.started = true;
+      cx.notify();
+    });
     this.details = null;
     this.diff = null;
     this.loadDetails(commit, cx);
@@ -1012,6 +1021,18 @@ export class Graph {
 
   // ---- drawing
 
+  ancestry() {
+    if (!this.selected) return null;
+    if (this.trace?.commits !== this.commits || this.trace.hash !== this.selected) {
+      this.trace = {
+        commits: this.commits,
+        hash: this.selected,
+        depths: ancestryDepths(this.commits, this.selected),
+      };
+    }
+    return this.trace.depths;
+  }
+
   graphCell(row, commit, colors, t, width) {
     const x = (lane) => PAD + lane * LANE + LANE / 2,
       y = (v) => v * this.rowH(),
@@ -1020,22 +1041,37 @@ export class Graph {
     const z = this.pathScale(),
       px = (lane) => x(lane) * z,
       py = (v) => y(v) * z;
-    // One stroked path per color: a row is a handful of paints, however many lanes cross it.
-    for (const [a, ya, b, yb, c, dashed] of row.segments) {
-      const color = dashed ? t.dim : colors[c % colors.length],
-        key = `${color}${dashed ? "-" : ""}`;
-      let p =
-        paths.get(key)?.p ??
-        (dashed
-          ? PathBuilder.stroke(1.5 * z).dash_array([3 * z, 3 * z])
-          : PathBuilder.stroke(1.5 * z));
+    const trace = this.ancestry();
+    const lightPaths = new Map();
+    const stroke = (size, dashed) => {
+      const path = PathBuilder.stroke(size * z);
+      return dashed ? path.dash_array([3 * z, 3 * z]) : path;
+    };
+    const reveal = this.ancestryReveal;
+    const lit = reveal?.hash !== this.selected || reveal.started;
+    const addSegment = (p, a, ya, b, yb) => {
       p = p.move_to(px(a), py(ya));
-      if (a === b) p = p.line_to(px(b), py(yb));
-      else {
-        const mid = (py(ya) + py(yb)) / 2;
-        p = p.cubic_bezier_to(px(b), py(yb), px(a), mid, px(b), mid);
-      }
-      paths.set(key, { p, color });
+      if (a === b) return p.line_to(px(b), py(yb));
+
+      const mid = (py(ya) + py(yb)) / 2;
+      return p.cubic_bezier_to(px(b), py(yb), px(a), mid, px(b), mid);
+    };
+
+    for (const [a, ya, b, yb, c, dashed, sources] of row.segments) {
+      const color = dashed ? t.dim : colors[c % colors.length];
+      const key = `${color}${dashed ? "-" : ""}`;
+      const base = paths.get(key)?.p ?? stroke(1.5, dashed);
+      paths.set(key, { p: addSegment(base, a, ya, b, yb), color });
+      if (!trace) continue;
+
+      let depth = Infinity;
+      for (const source of sources) depth = Math.min(depth, trace.get(source) ?? Infinity);
+      if (!Number.isFinite(depth)) continue;
+
+      const delay = Math.min(depth, 7) * 45;
+      const lightKey = `${delay}:${dashed}`;
+      const light = lightPaths.get(lightKey)?.p ?? stroke(2.5, dashed);
+      lightPaths.set(lightKey, { p: addSegment(light, a, ya, b, yb), delay });
     }
     const color = commit.uncommitted ? t.dim : colors[row.lane % colors.length];
     const dot = div()
@@ -1054,6 +1090,16 @@ export class Graph {
         .children(
           [...paths.values()].map(({ p, color }) =>
             window.paint_path(p.build(), color).absolute().top(0).left(0).size_full(),
+          ),
+        )
+        .children(
+          [...lightPaths].map(([key, { p, delay }]) =>
+            div()
+              .id(`graph-ancestry-${commit.hash}-${this.selected}-${key}`)
+              .absolute().inset_0()
+              .opacity(lit ? 1 : 0)
+              .transition("opacity", { duration: 135, delay, easing: "ease-out" })
+              .child(window.paint_path(p.build(), t.accent).size_full()),
           ),
         )
         // HEAD is a ring, as in Git Graph; uncommitted changes a gray one.

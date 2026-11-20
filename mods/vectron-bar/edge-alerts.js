@@ -1,12 +1,38 @@
 import { div } from "gpui-kit";
-import { agents, focused, run } from "herdr";
+import { agents, focused, run, setShared, shared } from "herdr";
+import { arrivalFadeMs, arrivalKey } from "./arrival.js";
 
 const statuses = ["blocked", "done"];
 const brightMs = 65;
 const fadeMs = 320;
+const arrivalHoldMs = 850;
 
 function shownTerminal(focus) {
   return focus?.shown ?? focus?.terminal;
+}
+
+function followAlert(target, status, cx) {
+  const { address: terminal, space, tab } = target;
+  if (terminal === shownTerminal(focused())) return;
+  if (!agents().some((agent) => agent.address === terminal && agent.status === status)) return;
+
+  const at = Date.now();
+  const arrival = {
+    id: `${at}-${Math.random()}`,
+    terminal, space, tab, status,
+    fading: false,
+    expiresAt: at + arrivalHoldMs + arrivalFadeMs,
+  };
+  setShared(arrivalKey, arrival);
+  run("agent.focus", { terminal });
+
+  // A later click supersedes this route, even if the same agent is targeted again.
+  cx.timer.after(arrivalHoldMs, () => {
+    if (shared(arrivalKey)?.id === arrival.id) setShared(arrivalKey, { ...arrival, fading: true });
+  });
+  cx.timer.after(arrivalHoldMs + arrivalFadeMs, () => {
+    if (shared(arrivalKey)?.id === arrival.id) setShared(arrivalKey, null);
+  });
 }
 
 function marker(status, group, pulse, t) {
@@ -35,11 +61,7 @@ function marker(status, group, pulse, t) {
     .on_mouse_down("left", (_event, cx) => cx.stop_propagation())
     .on_click((_event, cx) => {
       cx.stop_propagation();
-      const terminal = target.address;
-      if (terminal === shownTerminal(focused())) return;
-      if (agents().some((agent) => agent.address === terminal && agent.status === status)) {
-        run("agent.focus", { terminal });
-      }
+      followAlert(target, status, cx);
     })
     .child(div().absolute().left(2).right(2).bottom(0).h(2).bg(color))
     .when(Boolean(pulse), (el) => el.child(

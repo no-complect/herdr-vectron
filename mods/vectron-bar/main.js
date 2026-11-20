@@ -16,6 +16,8 @@ import {
 import { setZoomBorder, ZOOM_BORDER } from "./zoom.js";
 import { lookFor, openMod } from "./opens.js";
 import { EdgeAlerts } from "./edge-alerts.js";
+import { activeArrival, arrivalMarker } from "./arrival.js";
+import { CabinetIntro } from "./cabinet.js";
 
 const own = (el) => el.on_mouse_down("left", (_e, cx) => cx.stop_propagation());
 
@@ -42,6 +44,7 @@ function toggleSidebar() {
 
 export default class VectronBar extends View {
   edgeAlerts = new EdgeAlerts();
+  cabinet = new CabinetIntro();
 
   init(_props, cx) {
     lookFor(["vectron-dialog-palette", "vectron-dialog-picker"], cx);
@@ -84,14 +87,19 @@ export default class VectronBar extends View {
         .map((a) => a.space),
     );
     const space = list.find((s) => s.active);
+    const arrival = activeArrival(focus);
     const cwd = focus?.cwd;
     const here = cwd ? (cwd === home() ? "~" : cwd.split("/").filter(Boolean).pop()) : null;
     const sep = () => div().flex_none().mx(10).text_color(t.border).child("│");
     // macOS draws its window buttons over this corner; leave them room.
     const w = window();
+    const inset = w?.platform === "macos" && !w.fullscreen ? 76 : 4;
+    const sweep = this.cabinet.sweep(t, inset + 12);
     return row
-      .pl(w?.platform === "macos" && !w.fullscreen ? 76 : 4)
-      .on_size_change((_size, cx) => {
+      .relative()
+      .pl(inset)
+      .on_size_change(({ width }, cx) => {
+        this.cabinet.measure(width, cx);
         const narrow = globalThis.window.viewport_size().width < 1024;
         if (narrow !== this.narrow) {
           this.narrow = narrow;
@@ -128,7 +136,7 @@ export default class VectronBar extends View {
             .hover((s) => s.bg(t.hover))
             .on_click(() => openMod("vectron-dialog-palette"))
             .text_color(t.accent)
-            .child(svg("mods/vectron-bar/vectron.svg").size(14)),
+            .child(this.cabinet.logo(t)),
         ),
       )
       .child(
@@ -192,6 +200,9 @@ export default class VectronBar extends View {
         el
           .child(sep())
           .child(div().flex_none().text_color(t.foreground).child(space.name))
+          .when(arrival?.space === space.id, (e) =>
+            e.child(arrivalMarker(arrival, t, "space").ml(5)),
+          )
           // The focused terminal may have moved away from the folder its space was named after.
           .when(Boolean(here) && here !== space.name, (e) =>
             e.child(div().flex_none().ml(8).text_color(t.muted).child(here)),
@@ -202,7 +213,8 @@ export default class VectronBar extends View {
           .when(Boolean(space.machine), (e) =>
             e.child(div().flex_none().ml(8).text_color(t.dim).child(`@${space.machine}`)),
           ),
-      );
+      )
+      .when(Boolean(sweep), (el) => el.child(sweep));
   }
 
   right(row, t) {

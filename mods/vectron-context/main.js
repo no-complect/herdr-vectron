@@ -371,8 +371,13 @@ export default class ContextInspector extends View {
       targets.set("reported", this.usageBarColor(after));
     }
     for (const category of categories) {
-      if (afterCounts[category.id] && beforeCounts[category.id] !== afterCounts[category.id]) {
-        targets.set(category.id, category.color);
+      const oldCount = beforeCounts[category.id];
+      const newCount = afterCounts[category.id];
+      if (newCount > oldCount) {
+        targets.set(category.id, {
+          color: category.color,
+          from: `${oldCount / newCount * 100}%`,
+        });
       }
     }
     this.dataFlash.start(cx, targets, { alreadyRendering: true });
@@ -604,7 +609,7 @@ export default class ContextInspector extends View {
                   .child(
                     this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
                   )
-                  .child(this.dataFlash.layer(c.id, "fill"))
+                  .when(this.replayCutoff === null, (el) => el.child(this.dataFlash.layer(c.id, "fill")))
                   .cursor_pointer()
                   .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
                   .on_click((_e, cx) => {

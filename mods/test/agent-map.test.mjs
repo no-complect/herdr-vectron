@@ -48,7 +48,7 @@ test("branch positions stay fixed when status changes and the layout tolerates d
   assert.equal(long.nodes[0].address, "t0");
 });
 
-test("only a newly blocked worker sends a pulse, and old timers cannot replay on space switches", () => {
+test("a new attention or completion pulse cannot replay across space switches", () => {
   const pulses = new AttentionPulses();
   const timers = [];
   let redraws = 0;
@@ -74,9 +74,9 @@ test("only a newly blocked worker sends a pulse, and old timers cannot replay on
   assert.equal(pulses.get("worker"), undefined);
   assert.equal(redraws, 3);
 
-  pulses.update(space.id, statuses("idle"), cx);
-  pulses.update(space.id, statuses("blocked"), cx);
-  pulses.update("different-space", statuses("blocked"), cx);
+  pulses.update(space.id, statuses("done"), cx);
+  assert.equal(pulses.get("worker")?.status, "done");
+  pulses.update("different-space", statuses("done"), cx);
   timers.splice(0).forEach((fire) => fire(cx));
   assert.equal(pulses.get("worker"), undefined);
   assert.equal(redraws, 3);
@@ -94,7 +94,7 @@ test("the overlay renders the live path, moves the pulse, and peeks at the click
       spaces: () => [space],
       panes: () => [],
       focused: () => ({ space: space.id, terminal: root.address }),
-      theme: () => ({ border: "#1b5592", blocked: "#ff5775" }),
+      theme: () => ({ border: "#1b5592", blocked: "#ff5775", done: "#7ab5ff" }),
       props: () => ({ overlay: "map" }),
       closeOverlay: (id) => calls.push(["close", id]),
       run: (command, args) => calls.push([command, args.terminal]),
@@ -125,6 +125,13 @@ test("the overlay renders the live path, moves the pulse, and peeks at the click
   timers.shift()(cx);
   const end = byId(view.render(cx), "agent-map-pulse-1");
   assert.ok(end.calls.left[0] > start.calls.left[0]);
+
+  worker.status = "done";
+  const returning = byId(view.render(cx), "agent-map-pulse-2");
+  assert.equal(returning?.calls.border_color[0], "#7ab5ff");
+  timers.at(-3)(cx);
+  const returned = byId(view.render(cx), "agent-map-pulse-2");
+  assert.ok(returned.calls.left[0] < returning.calls.left[0]);
 
   byId(attention, "agent-map-node-worker").calls.on_click[0]();
   assert.deepEqual(calls, [["close", "map"], ["terminal.peek", "worker"]]);

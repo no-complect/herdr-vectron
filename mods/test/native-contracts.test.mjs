@@ -610,18 +610,13 @@ test("Context leaves missing usage, unknown window, and partial transcript warni
   assert.ok(hasText(view.gauge(null), "No usage sample is available at this replay point."));
 });
 
-test("Context meters retain their native pulse rates and flash only changed categories", async () => {
+test("Context flashes only the newly added fraction and leaves replay static", async () => {
   const { default: Inspector } = await loadMod("vectron-context", "main.js", {
     herdr: contextHost,
   });
   const view = new Inspector();
-  const updates = [];
-  view.controlsFlash = { layer: () => null };
-  view.dataFlash = {
-    layer: () => null,
-    start: (_cx, targets) => updates.push(Array.from(targets.keys())),
-  };
-  view.width = 450;
+  const cx = { spawn: noop, timer: { every: noop } };
+  view.init({}, cx);
   const initial = {
     reported: { input: 20, window: 100 },
     events: [
@@ -633,16 +628,17 @@ test("Context meters retain their native pulse rates and flash only changed cate
     reported: { input: 25, window: 100 },
     events: [...initial.events, { id: 3, segment: 0, category: "files", tokens: 7 }],
   };
+  view.flashUpdatedCounts(cx, initial, changed);
 
-  const meter = view.gauge(initial.reported);
-  const pulse = (root, id) =>
-    find(root, (node) => node.calls.id?.[0] === id).calls.loop[1].period;
-  assert.equal(pulse(meter, "vector-fill-reported"), 477);
-  const breakdown = view.breakdown(view.contextEvents.capture(changed, null, false).totals);
-  assert.equal(pulse(breakdown, "vector-fill-user"), 683);
-  assert.equal(pulse(breakdown, "vector-fill-files"), 729);
-  view.flashUpdatedCounts({}, initial, changed);
-  assert.deepEqual(updates, [["reported", "files"]]);
+  const flash = (tree, key) =>
+    find(tree, (node) => node.calls.id?.[0].startsWith(`vector-flash-${key}-`));
+  const totals = view.contextEvents.capture(changed, null, false).totals;
+  const breakdown = view.breakdown(totals);
+  assert.ok(flash(view.gauge(changed.reported), "reported"));
+  assert.equal(flash(breakdown, "user"), undefined);
+  assert.ok(Math.abs(parseFloat(flash(breakdown, "files").calls.left?.[0]) - 100 * 5 / 12) < 0.01);
+  view.replayCutoff = 2;
+  assert.equal(flash(view.breakdown(totals), "files"), undefined);
 });
 
 test("Files discards a stale directory listing when the focused workspace changes", async () => {

@@ -27,6 +27,8 @@ import { resumeCommand, argvOf } from "./reopen.js";
 import { announce, isActive, entered, move, keepKeys } from "./keynav.js";
 import { programIcon } from "./program-icon.js";
 import { FocusTrail } from "./focus-trail.js";
+import { splitPane } from "./split-intent.js";
+import { activeArrival, arrivalMarker } from "./arrival.js";
 
 // The last closed tabs (newest last), kept across restarts for ctrl-alt-shift-t.
 const CLOSED = "vectron-tabs.closed";
@@ -87,6 +89,7 @@ export default class Tabs extends View {
         else if (c === "toggle-files") this.togglePanel("files");
         else if (c === "toggle-changes") this.togglePanel("changes");
         else if (c === "toggle-context") this.togglePanel("context");
+        else if (c === "split-right" || c === "split-down") splitPane(c.slice(6));
         else this.keynav(move(c));
         cx.notify();
       }
@@ -311,6 +314,7 @@ export default class Tabs extends View {
     this.focusTrail.update(space?.id, activeTab);
     const activePanel = panel?.hidden ? null : body?.active;
     const focus = focused();
+    const arrival = activeArrival(focus);
     const selection = {
       tab: activeTab,
       terminal: focus?.agent ?? focus?.terminal,
@@ -424,6 +428,9 @@ export default class Tabs extends View {
           )
           .when(Boolean(trail), (el) => el.child(trail))
           .child(this.flash.layer(flashKey))
+          .when(c.active && arrival?.tab === c.id, (el) =>
+            el.child(arrivalMarker(arrival, t, "tab").absolute().top(0).right(2)),
+          )
           // The keyboard cursor.
           .when(this.keyOn && this.cursor === c.id, (el) =>
             el.child(

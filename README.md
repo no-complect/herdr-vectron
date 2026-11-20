@@ -20,17 +20,19 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 
 ## Controls
 
-In Context’s live **Since compact** view, a recorded Codex or Claude compaction can shrink the captured-text bar. The previous extent fades out as the panel shows the estimates before and after.
+In live Context, a growing category flashes over the newly added portion of its segment. In **Since compact**, a recorded Codex or Claude compaction can shrink the captured-text bar. The previous extent fades out as the panel shows the estimates before and after.
 
 | Control | Action |
 | --- | --- |
 | ⌘P | Find a tab, space, or agent |
 | ⌘⇧P | Search commands |
 | ⌘1–9 and Ctrl+1–9 | Select a space or agent |
+| Alt+Enter and Alt+Shift+Enter | Split right or down. A beam draws along the corresponding edge of the new pane header. |
 | Shift+F2 or right-click a space → Rename | Rename a space |
 | **+** in the tab bar | Start an agent. Type to filter the list. |
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
+| Changes → Graph → Select a commit | Trace its ancestry through the loaded history, including both parents of a merge |
 | Context → Categories | Show the full category legend and filter by category |
 | Context → Select an event | Open its preview |
 | Context → Count details | See the model, window size, and how the counts were calculated |
@@ -39,11 +41,11 @@ In Context’s live **Since compact** view, a recorded Codex or Claude compactio
 
 The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming and agent filtering use the command palette's typing flash.
 
-In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
+In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits. When the worker reports completion, a pulse travels back toward its parent.
 
-Edge Alerts in the top bar pulse when a background agent needs input or finishes. The markers show how many agents are waiting or finished. Click a marker to open the most recently changed agent in that group.
+Edge Alerts in the top bar pulse when a background agent needs input or finishes. The markers show how many agents are waiting or finished. Click a marker to open the most recently changed agent in that group. The same diamond or check briefly appears next to the destination space name and on the tab and pane header.
 
-Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space.
+Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space. The first time the top bar appears in an app session, the Vectron logo draws itself and sends a short streak across the bar’s left section.
 
 ## Development
 

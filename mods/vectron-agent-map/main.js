@@ -66,17 +66,17 @@ function cables(edges, t) {
 }
 
 function travelingPulse({ parent, child }, signal, t) {
-  const atSource = signal.phase === "start";
+  const atParent = (signal.phase === "start") === (signal.status === "blocked");
   const travel = { duration: travelMs, easing: "linear" };
   return div()
     .id(`agent-map-pulse-${signal.sequence}`)
     .absolute()
-    .left((atSource ? parent.x + nodeWidth : child.x) - 6)
-    .top((atSource ? parent.y : child.y) - 6)
+    .left((atParent ? parent.x + nodeWidth : child.x) - 6)
+    .top((atParent ? parent.y : child.y) - 6)
     .size(12)
     .rounded(6)
     .border(2)
-    .border_color(t.blocked)
+    .border_color(t[signal.status])
     .bg(t.foreground)
     .opacity(signal.phase === "fade" ? 0 : 1)
     .transition("left", travel)

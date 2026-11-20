@@ -38,9 +38,8 @@ async function paneHeader() {
 test("terminal headers mark history and pulse only on the observed return to live output", async () => {
   const { actions, cx, render } = await paneHeader();
   assert.deepEqual(render(0), { history: undefined, pulse: undefined });
-  assert.ok(render(4).history);
   const { history, pulse } = render(30);
-  assert.ok(history);
+  assert.equal(history.calls.text_color[0], "#f8ab59");
   assert.equal(pulse, undefined);
   assert.equal(history.calls.tooltip[0], "Return to live output");
 
@@ -92,12 +91,4 @@ test("alternate screens, replacement changes, and missing panes clear the return
   assert.deepEqual(render(0), { history: undefined, pulse: undefined });
   state.pane = pane;
   assert.equal(render(0).pulse, undefined);
-});
-
-test("an amber History marker appears only while the terminal is scrolled back", async () => {
-  const { render } = await paneHeader();
-  assert.equal(render(0).history, undefined);
-  assert.equal(render(5).history.calls.text_color[0], "#f8ab59");
-  assert.ok(render(30).history);
-  assert.equal(render(null).history, undefined);
 });

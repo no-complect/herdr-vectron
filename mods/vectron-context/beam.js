@@ -50,8 +50,9 @@ export class Flash {
 
   layer(key, shape = "control") {
     const burst = this.burst;
-    const color = burst?.targets.get(key);
-    if (!color) return div().absolute().w(0).h(0);
+    const target = burst?.targets.get(key);
+    if (!target) return div().absolute().w(0).h(0);
+    const { color, from = 0 } = typeof target === "string" ? { color: target } : target;
 
     const id = "vector-flash-" + key + "-" + burst.sequence + "-" + burst.index;
     const paint = (part) =>
@@ -69,9 +70,10 @@ export class Flash {
         .child(
           paint("color")
             .inset_0()
+            .left(from)
             .bg(color + "c4"),
         )
-        .child(paint("core").inset_0().bg("#f6f8ff66"));
+        .child(paint("core").inset_0().left(from).bg("#f6f8ff66"));
     }
     if (shape === "frame") {
       const edges = (part, width, tint) => [
