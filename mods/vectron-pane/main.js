@@ -16,6 +16,7 @@ import { act, readLive, watchLive, touches } from "./browser/client.js";
 import { Flash, flashColor } from "./beam.js";
 import { programIcon } from "./program-icon.js";
 import { FocusTrail } from "./focus-trail.js";
+import { ScrollbackIndicator } from "./scrollback.js";
 
 // Keyboard navigation (keynav protocol, as in the other vectron mods' keynav.js): while a driver
 // such as whistle has the terminal field selected, the pane it points at lights up its header.
@@ -65,6 +66,7 @@ export default class Pane extends View {
     this.live = null;
     this.flash = null;
     this.headerFlash = new Flash();
+    this.scrollback = new ScrollbackIndicator();
     this.previousPane = null;
     this.headerColor = null;
     this.typing = false;
@@ -94,6 +96,7 @@ export default class Pane extends View {
   }
 
   async close() {
+    this.scrollback.clear();
     this.closed = true;
     this.focusTrail.clear();
     if (!this.live) return;
@@ -408,6 +411,8 @@ export default class Pane extends View {
   render(cx) {
     const t = theme();
     const p = this.me();
+    const browser = this.live && p?.terminal === this.terminal;
+    const history = this.scrollback.observe(browser ? null : p, cx);
     if (!p) {
       this.focusTrail.clear();
       return div();
@@ -415,7 +420,7 @@ export default class Pane extends View {
     const focus = focused();
     this.focusTrail.update(focus?.tab === p.tab ? p.tab : null, focus?.pane);
     const trail = p.focused ? null : this.focusTrail.layer(p.pane, t.ansi6, cx);
-    if (this.live && p.terminal === this.terminal) {
+    if (browser) {
       return this.browserHeader(t, p)
         .relative()
         .when(Boolean(trail), (el) => el.child(trail));
@@ -459,6 +464,7 @@ export default class Pane extends View {
         .when(p.focused, (el) => el.child(this.headerFlash.layer("header")))
         .when(Boolean(trail), (el) => el.child(trail))
         .when(Boolean(pic), (el) => el.child(pic))
+        .child(this.scrollback.layer())
         .child(
           div()
             .flex_none()
@@ -501,6 +507,7 @@ export default class Pane extends View {
           ),
         )
         .when(st === "done", (el) => el.child(div().size(7).flex_none().rounded(0).bg(t.done)))
+        .when(Boolean(history), (el) => el.child(history))
         // A zoomed pane shows only its unzoom button, always.
         .when(p.zoomed, (el) =>
           el.child(this.button(t, `ph-z-${pane}`, "unzoom", "pane.zoom", { pane })),
