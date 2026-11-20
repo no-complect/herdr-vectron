@@ -53,7 +53,7 @@
       "name": "Spaces",
       "map": {
         "n": ["New space", "space.new"],
-        "r": ["Rename space", "mod.open:vectron-dialogs"]
+        "r": ["Rename space", "space.rename"]
       }
     },
     "p": ["Command palette", "app.palette"],

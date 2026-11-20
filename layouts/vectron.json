@@ -304,6 +304,12 @@
           "bar": "Full width",
           "enabled": false,
           "mappings": {
+            "S": {
+              "name": "Spaces",
+              "map": {
+                "r": ["Rename space", "mod.open:vectron-dialogs"]
+              }
+            },
             "/": [
               "Go to tab or space",
               "mod.open:vectron-dialog-picker"
