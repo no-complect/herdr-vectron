@@ -2,7 +2,11 @@ import { View, div, image, svg } from "gpui-kit";
 import { fileAppearance, gitStatus, statusColor } from "./appearance.js";
 import GitGraph from "./graph/main.js";
 import { reviewCommit } from "./graph/execute.js";
-import { v_flex, h_flex, InputState, Input, Scrollbar, v_virtual_list } from "gpui-base";
+import {
+  v_flex, h_flex, InputState, Input, Scrollbar, ScrollHandle, VirtualListScrollHandle, v_virtual_list,
+} from "gpui-base";
+import { parseDiffPreview, previewRows } from "./diff-preview.js";
+import { DiffSweep } from "./diff-sweep.js";
 import {
   spaces,
   panes,
@@ -52,28 +56,6 @@ const READ = [
 ];
 const countLines = (text) => (text ? text.split("\n").length - Number(text.endsWith("\n")) : 0);
 
-// Numbers each diff line once, so a frame only draws the rows on screen.
-function diffRows(lines) {
-  let old = 0,
-    next = 0;
-  return lines.map((line) => {
-    const match = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(line);
-    if (match) {
-      old = +match[1];
-      next = +match[2];
-      return { kind: "@", text: line };
-    }
-    const kind = line[0];
-    if (kind === "-") return { kind, number: old++, text: line.slice(1) || " " };
-    if (kind === "+") return { kind, number: next++, text: line.slice(1) || " " };
-    if (kind === " ") {
-      old++;
-      return { kind, number: next++, text: line.slice(1) || " " };
-    }
-    return { kind: "", text: line };
-  });
-}
-
 export default class Changes extends View {
   init(_props, cx) {
     // One mod, two views: props {view: "graph"} is the commit graph (graph/), and the
@@ -86,6 +68,9 @@ export default class Changes extends View {
     this.files = [];
     this.rows = [];
     this.diffWidth = 0;
+    this.diffSweep = new DiffSweep();
+    this.wrappedScroll = ScrollHandle.new();
+    this.virtualScroll = VirtualListScrollHandle.new();
     this.message = "";
     this.handle = cx.focus_handle();
     this.input = InputState.new({ placeholder: "Commit message" });
@@ -126,6 +111,13 @@ export default class Changes extends View {
         cx.notify();
       }
     });
+  }
+
+  close() {
+    this.diffRequest = null;
+    this.diffSweep?.reset(false);
+    this.wrappedScroll?.release();
+    this.virtualScroll?.release();
   }
 
   watch(root, cx) {
@@ -251,14 +243,7 @@ export default class Changes extends View {
         }
         // The first file's diff shows until you pick another.
         if (!this.open && !this.closed && files.length) this.open = files[0].path;
-        if (this.open) {
-          try {
-            await this.load(this.open, context);
-          } catch {
-            if (key() === context)
-              this.setLines(["Cannot preview this diff (too large or unreadable)"]);
-          }
-        }
+        if (this.open) await this.load(this.open, context);
       } catch (e) {
         if (key() === context) this.error = String(e);
       } finally {
@@ -268,62 +253,76 @@ export default class Changes extends View {
     });
   }
 
-  async load(path, context) {
-    const file = this.files.find((f) => f.path === path),
-      root = this.root,
-      on = this.on;
+  async load(path, context, showError = false) {
+    const file = this.files.find((f) => f.path === path);
     if (!file) return;
-    let lines;
-    if (file.fresh || (!this.hasHead && file.status === "A")) {
-      const text = await readTextFile(`${root}/${path}`, { on }).catch(() => null);
-      if (text === null) lines = ["Cannot preview this file (binary, too large, or unreadable)"];
-      else if (text.includes("\0")) lines = ["Binary file · no text diff"];
-      else {
-        file.add = countLines(text);
-        lines = [
-          `@@ -0,0 +1,${file.add} @@`,
-          ...text
-            .slice(0, 400000)
-            .replace(/\n$/, "")
-            .split("\n")
-            .slice(0, 1500)
-            .map((l) => `+${l}`),
-        ];
-      }
-    } else {
-      const r = await exec(
-        "git",
-        [
-          ...READ,
-          "diff",
-          ...(this.hasHead ? ["HEAD"] : []),
-          "--no-ext-diff",
-          "--no-textconv",
-          "--no-color",
-          "--",
-          path,
-        ],
-        { cwd: root, on },
-      );
-      if (r.code !== 0) throw new Error(r.stderr);
-      const all = r.stdout.replace(/\n$/, "").split("\n"),
-        first = all.findIndex((l) => l.startsWith("@@"));
-      lines =
-        first < 0
+
+    const request = {};
+    this.diffRequest = request;
+    const current = () =>
+      this.diffRequest === request && key() === context && this.open === path;
+    const { root, on } = this;
+    try {
+      let lines, newFile, limited;
+      if (file.fresh || (!this.hasHead && file.status === "A")) {
+        const text = await readTextFile(`${root}/${path}`, { on }).catch(() => null);
+        if (!current()) return;
+        if (text === null) lines = ["Cannot preview this file (binary, too large, or unreadable)"];
+        else if (text.includes("\0")) lines = ["Binary file · no text diff"];
+        else {
+          file.add = countLines(text);
+          newFile = true;
+          limited = text.length > 400000;
+          lines = file.add ? [
+            `@@ -0,0 +1,${file.add} @@`,
+            ...text.slice(0, 400000).replace(/\n$/, "").split("\n")
+              .slice(0, previewRows)
+              .map((line) => `+${line}`),
+          ] : ["No text diff available"];
+        }
+      } else {
+        const result = await exec(
+          "git",
+          [
+            ...READ, "diff", ...(this.hasHead ? ["HEAD"] : []),
+            "--no-ext-diff", "--no-textconv", "--no-color", "--", path,
+          ],
+          { cwd: root, on },
+        );
+        if (!current()) return;
+        if (result.code !== 0) throw new Error(result.stderr);
+        const all = result.stdout.replace(/\n$/, "").split("\n");
+        const first = all.findIndex((line) => line.startsWith("@@"));
+        newFile = first >= 0 && all.slice(0, first).some((line) => line.startsWith("new file mode "));
+        lines = first < 0
           ? [file.binary ? "Binary file changed" : "No text diff available"]
           : all.slice(first);
+      }
+
+      this.setLines(lines, { newFile, limited });
+    } catch (e) {
+      if (!current()) return;
+      if (showError) this.note = `Cannot preview this diff (too large or unreadable): ${e}`;
+      else this.setLines(["Cannot preview this diff (too large or unreadable)"]);
     }
-    if (key() === context && this.open === path)
-      this.setLines(
-        lines
-          .slice(0, 1500)
-          .map((line) => (line.length > 4000 ? line.slice(0, 4000) + "… (line truncated)" : line)),
-      );
   }
 
-  setLines(lines) {
-    this.rows = diffRows(lines);
-    this.diffWidth = Math.max(300, ...lines.map((line) => line.length * 7 + 50));
+  setLines(lines, options) {
+    this.diffRequest = null;
+    const preview = parseDiffPreview(lines, options);
+    const hadHunks = this.diffPreview?.hunks.length > 0;
+    const { rows, hunks } = preview;
+    if (!hunks.length || !hadHunks) {
+      this.diffSweep?.reset(hunks.length > 0);
+    } else if (this.diffSweep.selectedRow != null) {
+      const selected = this.diffPreview.hunks.find(({ row }) => row === this.diffSweep.selectedRow);
+      if (!hunks.some(({ row, line }) => row === selected?.row && line === selected.line))
+        this.diffSweep.selectedRow = null;
+    }
+
+    this.diffPreview = preview;
+    this.rows = rows;
+    this.diffWidth = Math.max(300, ...rows.map(({ text }) => text.length * 7 + 50));
   }
 
   pick(path, cx) {
@@ -334,12 +333,7 @@ export default class Changes extends View {
     const context = this.context;
     if (this.open)
       cx.spawn(async (cx) => {
-        try {
-          await this.load(path, context);
-        } catch (e) {
-          if (key() === context && this.open === path)
-            this.note = `Cannot preview this diff (too large or unreadable): ${e}`;
-        }
+        await this.load(path, context, true);
         cx.notify();
       });
     cx.notify();
@@ -729,10 +723,14 @@ export default class Changes extends View {
   }
 
   // Wrapped rows grow to fit their text; unwrapped ones stay one 20px line.
-  diffRow({ kind, number, text }, t, wrap) {
+  diffRow({ kind, number, text }, t, wrap, selected) {
     const line = (el) => (wrap ? el.min_h(20).whitespace_normal() : el.h(20).truncate());
     if (kind === "@")
-      return line(div().w_full().px(12).flex_none().bg(t.raised).text_color(t.dim)).child(text);
+      return line(
+        div().w_full().px(12).flex_none()
+          .bg(selected ? t.accent + "35" : t.raised)
+          .text_color(selected ? t.foreground : t.dim),
+      ).child(text);
     return h_flex()
       .w_full()
       .when(wrap, (e) => e.min_h(20).items_start())
@@ -754,6 +752,64 @@ export default class Changes extends View {
           .text_color(kind === "+" ? t.ansi2 : kind === "-" ? t.ansi1 : t.foreground)
           .child(text),
       );
+  }
+
+  diffView(t, wrap, cx) {
+    const preview = this.diffPreview;
+    const showRail = Boolean(preview?.hunks.length);
+    const drawRow = (row, index) =>
+      this.diffRow(row, t, wrap, this.diffSweep.selectedRow === index);
+    const text = div()
+      .id("changes-diff-container")
+      .flex_1()
+      .h_full()
+      .min_w(0)
+      .min_h(0)
+      .relative()
+      .overflow_hidden()
+      .font_family(settings().font_family ?? "JetBrains Mono")
+      .text_size(11)
+      .when(wrap, (el) => el.child(
+        v_flex()
+          .id("changes-diff-wrap")
+          .size_full()
+          .overflow_y_scrollbar()
+          .track_scroll(this.wrappedScroll)
+          .children(this.rows.map(drawRow)),
+      ))
+      .when(!wrap && this.rows.length > 0, (el) => el
+        .child(
+          div().id("changes-diff-x").size_full().overflow_x_scrollbar().child(
+            div().w_full().min_w(this.diffWidth).h_full().child(
+              v_virtual_list(
+                "changes-diff", this.rows.length, 20, (i) => String(i),
+                (range) => this.rows.slice(range.start, range.end)
+                  .map((row, i) => drawRow(row, range.start + i)),
+              ).track_scroll(this.virtualScroll).size_full(),
+            ),
+          ),
+        )
+        .child(Scrollbar.vertical("changes-diff").viewport_from_layout().absolute().inset_0()),
+      )
+      .when(!this.open && this.files.length > 0, (el) => el.child(
+        div().absolute().top(6).px(12).text_color(t.dim).child("Select a file to view its changes"),
+      ));
+
+    return v_flex().flex_1().min_h(0)
+      .when(showRail, (el) => el.child(
+        h_flex().flex_none().h(19).px(6).justify_between().items_center()
+          .text_size(10).text_color(t.dim)
+          .child(preview.wholeFile ? "File range" : "Preview range")
+          .when(preview.limited, (row) => row.child("Diff preview clipped")),
+      ))
+      .child(h_flex().flex_1().min_h(0).child(text).when(showRail, (el) => el.child(
+        this.diffSweep.render(preview, t, cx, ({ row, revealRow }) => {
+          if (this.diffPreview !== preview) return false;
+          if (wrap) this.wrappedScroll.scroll_to_item(revealRow);
+          else this.virtualScroll.scroll_to_item(row, "center");
+          return true;
+        }),
+      )));
   }
 
   // Pointer moves come in window units; element sizes are units times the zoom.
@@ -1013,73 +1069,7 @@ export default class Changes extends View {
                 )
                 .hover((s) => s.bg(t.border)),
             )
-            .child(
-              div()
-                .id("changes-diff-container")
-                .flex_1()
-                .min_h(0)
-                .relative()
-                .rounded(0)
-                .overflow_hidden()
-                .font_family(settings().font_family ?? "JetBrains Mono")
-                .text_size(11)
-                .when(wrap, (e) =>
-                  e.child(
-                    v_flex()
-                      .id("changes-diff-wrap")
-                      .size_full()
-                      .overflow_y_scrollbar()
-                      .children(this.rows.map((row) => this.diffRow(row, t, true))),
-                  ),
-                )
-                .when(!wrap, (e) =>
-                  e
-                    .child(
-                      div()
-                        .id("changes-diff-x")
-                        .size_full()
-                        .overflow_x_scrollbar()
-                        .child(
-                          div()
-                            .w_full()
-                            .min_w(this.diffWidth)
-                            .h_full()
-                            .child(
-                              this.rows.length
-                                ? v_virtual_list(
-                                    "changes-diff",
-                                    this.rows.length,
-                                    20,
-                                    (i) => String(i),
-                                    (range) =>
-                                      this.rows
-                                        .slice(range.start, range.end)
-                                        .map((row) => this.diffRow(row, t, false)),
-                                  ).size_full()
-                                : div(),
-                            ),
-                        ),
-                    )
-                    .when(this.rows.length > 0, (el) =>
-                      el.child(
-                        Scrollbar.vertical("changes-diff")
-                          .viewport_from_layout()
-                          .absolute()
-                          .inset_0(),
-                      ),
-                    ),
-                )
-                .when(!this.open && this.files.length > 0, (e) =>
-                  e.child(
-                    div()
-                      .absolute()
-                      .top(6)
-                      .px(12)
-                      .text_color(t.dim)
-                      .child("Select a file to view its changes"),
-                  ),
-                ),
-            ),
+            .child(this.diffView(t, wrap, cx)),
         )
         .when(Boolean(this.note), (e) =>
           e.child(div().px(10).pb(8).text_size(11).text_color(t.ansi1).child(this.note)),

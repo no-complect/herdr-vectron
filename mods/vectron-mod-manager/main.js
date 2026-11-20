@@ -527,7 +527,11 @@ export default class ModManager extends View {
         "Herdr's own mods can't be removed. Press enter to have AI edit a clone instead.",
       );
     const what = mod.record
-      ? `${mod.record.mods.join(", ")} and the keys it added`
+      ? `${[
+          ...mod.record.mods,
+          ...(mod.record.layouts ?? []).map((name) => `layouts/${name}`),
+          ...(mod.record.themes ?? []).map((name) => `themes/${name}`),
+        ].join(", ")} and the keys it added`
       : mod.symlink
         ? `the link ${mod.name} (its target folder stays)`
         : `the folder mods/${mod.name}`;
@@ -1279,6 +1283,7 @@ export default class ModManager extends View {
           ["Installed", r.at?.slice(0, 10) ?? "?"],
           ["Mods", r.mods.join(", ")],
           r.layouts?.length ? ["Layouts", r.layouts.join(", ")] : null,
+          r.themes?.length ? ["Themes", r.themes.join(", ")] : null,
           r.keys?.length ? ["Keys", r.keys.map((k) => `${k.key} → ${k.action}`).join(", ")] : null,
         ].filter(Boolean)
       : [
@@ -1608,6 +1613,7 @@ export default class ModManager extends View {
 
   reviewView(p) {
     const { plan, pkg, source, fetched, record } = this.review;
+    const fileCount = pkg.files.length + pkg.layouts.length + pkg.themes.length;
     const line = (text, color, glyph) =>
       h_flex()
         .gap(10)
@@ -1654,8 +1660,9 @@ export default class ModManager extends View {
           plan.layouts.length
             ? line(`Layouts: ${plan.layouts.join(", ")} (your layout is not switched)`)
             : null,
+          plan.themes.length ? line(`Themes: ${plan.themes.join(", ")}`) : null,
           line(
-            `${pkg.files.length} file(s) · commit ${short(fetched.sha)}${record ? ` (installed: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · no RECIPE.md"}`,
+            `${fileCount} file(s) · commit ${short(fetched.sha)}${record ? ` (installed: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · no RECIPE.md"}`,
           ),
         ].filter(Boolean),
       ),

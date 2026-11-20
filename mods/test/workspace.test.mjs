@@ -210,12 +210,91 @@ test("the mod manager separates test files, collisions, and user-owned shortcuts
   assert.deepEqual(keys.global, { "ctrl-u": "user.keep", "ctrl-i": "user.rebound" });
 });
 
-test("a failed mod update restores the previous package", async () => {
+test("the mod manager installs, updates, and removes a package theme without taking user files", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "vectron-theme-install-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const appHome = join(dir, "app");
+  const source = join(dir, "source");
+  const base = join(source, "package");
+  const asset = "themes/vectron.json";
+  const installed = join(appHome, asset);
+  const userTheme = join(appHome, "themes", "personal.json");
+  await mkdir(join(base, "mods", "example"), { recursive: true });
+  await mkdir(join(base, "layouts"), { recursive: true });
+  await mkdir(join(base, "themes"), { recursive: true });
+  await mkdir(join(appHome, "themes"), { recursive: true });
+  await writeFile(join(base, "mods", "example", "main.js"), "export default class Example {}");
+  await writeFile(join(base, "layouts", "vectron.json"), '{"theme":"vectron"}');
+  await writeFile(join(base, asset), '{"background":"#010203"}');
+  await writeFile(userTheme, '{"background":"#abcdef"}');
+
+  const tracked = ["package/mods/example/main.js", "package/layouts/vectron.json"];
+  const [legacy] = findPackages(tracked);
+  const [pkg] = findPackages([
+    ...tracked,
+    `package/${asset}`,
+    "package/themes/test/fixture.json",
+    "package/themes/preview.png",
+    "package/docs/vectron-walkthrough.mp4",
+    "package/docs/vectron-preview.gif",
+    "package/mods/test/workspace.test.mjs",
+    "themes/unrelated.json",
+  ]);
+  assert.deepEqual(pkg.themes, [`package/${asset}`]);
+
+  const run = promisify(execFile);
+  const io = {
+    readText: (path) => readFile(path, "utf8").catch((error) => {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }),
+    async exec(command, args) {
+      if (command === "herdr-app") return { code: 0 };
+      try {
+        return { code: 0, ...(await run(command, args)) };
+      } catch (error) {
+        return { code: error.code, stderr: error.stderr ?? error.message };
+      }
+    },
+  };
+  const plan = (candidate, record) => planInstall(io, {
+    appHome, dir: source, pkg: candidate, record,
+    existingMods: record ? ["example"] : [],
+    existingLayouts: record ? ["vectron.json"] : [],
+  });
+  const install = (candidate, previous) => applyInstall(io, {
+    appHome, plan: candidate, record: previous, source: "owner/repo", prefix: "package",
+  });
+  const { themes: _unused, ...olderRecord } = await install(await plan(legacy));
+
+  await writeFile(installed, '{"background":"#445566"}');
+  const clash = await plan(pkg, olderRecord);
+  assert.deepEqual(clash.clashes, [asset]);
+  await assert.rejects(install(clash, olderRecord), /already exists/);
+  assert.equal(await readFile(installed, "utf8"), '{"background":"#445566"}');
+  await rm(installed);
+
+  const record = await install(await plan(pkg, olderRecord), olderRecord);
+  assert.deepEqual(record.themes, ["vectron.json"]);
+  assert.equal(await readFile(installed, "utf8"), '{"background":"#010203"}');
+  assert.deepEqual((await readdir(join(appHome, "themes"))).sort(), ["personal.json", "vectron.json"]);
+
+  await writeFile(join(base, asset), '{"background":"#020304"}');
+  const updated = await install(await plan(pkg, record), record);
+  assert.equal(await readFile(installed, "utf8"), '{"background":"#020304"}');
+  await uninstall(io, { appHome, record: updated });
+  assert.deepEqual(await readdir(join(appHome, "themes")), ["personal.json"]);
+  assert.equal(await readFile(userTheme, "utf8"), '{"background":"#abcdef"}');
+});
+
+test("a failed theme update restores the previous package", async () => {
   const files = new Map([
     ["/app/mods/first", "old first"],
     ["/app/mods/second", "old second"],
+    ["/app/themes/example.json", "old theme"],
     ["/cache/mods/first", "new first"],
     ["/cache/mods/second", "new second"],
+    ["/cache/themes/example.json", "new theme"],
   ]);
   let replacementFailed = false;
   const io = {
@@ -223,9 +302,10 @@ test("a failed mod update restores the previous package", async () => {
       const [from, to] = args.slice(-2);
       if (command === "mktemp") return { code: 0, stdout: "/app/.mod-manager-install.fixture\n" };
       if (command === "test") return { code: Number(!files.has(args[1])) };
-      const replacesSecondMod = (command === "cp" || command === "mv") && to === "/app/mods/second";
-      if (!replacementFailed && replacesSecondMod) {
+      const replacesTheme = command === "mv" && to === "/app/themes/example.json";
+      if (!replacementFailed && replacesTheme) {
         assert.equal(files.get("/app/mods/first"), "new first");
+        assert.equal(files.get("/app/mods/second"), "new second");
         replacementFailed = true;
         return { code: 1, stderr: "fixture activation failure" };
       }
@@ -238,13 +318,15 @@ test("a failed mod update restores the previous package", async () => {
     },
   };
   const mods = ["first", "second"];
-  const plan = { base: "/cache", mods, layouts: [], clashes: [], keyAdds: [], risks: [] };
+  const themes = ["example.json"];
+  const plan = { base: "/cache", mods, layouts: [], themes, clashes: [], keyAdds: [], risks: [] };
   await assert.rejects(
-    applyInstall(io, { appHome: "/app", plan, record: { mods } }),
+    applyInstall(io, { appHome: "/app", plan, record: { mods, themes } }),
     /fixture activation failure/,
   );
   assert.equal(files.get("/app/mods/first"), "old first");
   assert.equal(files.get("/app/mods/second"), "old second");
+  assert.equal(files.get("/app/themes/example.json"), "old theme");
 });
 
 test("installer cleanup failures leave backups available and allow another install", async (t) => {

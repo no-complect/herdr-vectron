@@ -91,9 +91,8 @@ export default class VectronBar extends View {
     const cwd = focus?.cwd;
     const here = cwd ? (cwd === home() ? "~" : cwd.split("/").filter(Boolean).pop()) : null;
     const sep = () => div().flex_none().mx(10).text_color(t.border).child("│");
-    // macOS draws its window buttons over this corner; leave them room.
     const w = window();
-    const inset = w?.platform === "macos" && !w.fullscreen ? 76 : 4;
+    const inset = 8;
     const sweep = this.cabinet.sweep(t, inset + 12);
     return row
       .relative()
@@ -101,19 +100,15 @@ export default class VectronBar extends View {
       .on_size_change(({ width }, cx) => {
         this.cabinet.measure(width, cx);
         const narrow = globalThis.window.viewport_size().width < 1024;
-        if (narrow !== this.narrow) {
+        const controlsWidth = w?.buttons ? 90 : 0;
+        if (narrow !== this.narrow || controlsWidth !== this.controlsWidth) {
           this.narrow = narrow;
-          const sizes = narrow
-            ? [
-                ["bar-left", { weight: 1 }],
-                ["ai-usage", { weight: 2 }],
-                ["bar-right", { px: w?.buttons ? 90 : 0 }],
-              ]
-            : [
-                ["bar-left", { weight: 3 }],
-                ["ai-usage", { weight: 2.5 }],
-                ["bar-right", { weight: 3 }],
-              ];
+          this.controlsWidth = controlsWidth;
+          const sizes = [
+            ["bar-left", { weight: narrow ? 1 : 3 }],
+            ["ai-usage", { weight: narrow ? 2 : 2.5 }],
+            ["bar-right", { px: controlsWidth }],
+          ];
           for (const [id, size] of sizes) {
             const current = find(layout(), id)?.size;
             if (current && (current.px !== size.px || current.weight !== size.weight))

@@ -2,9 +2,9 @@
 
 Vectron is a layout for Herdr with dark, boxed panels, a bright vector palette, and three-stage flashes on interaction. The Context panel follows the selected local Codex, Claude Code, Grok Build, or Antigravity CLI session.
 
-![Animated preview of Vectron’s focus trails, typing flashes, and live Context panel](docs/vectron-preview.gif)
+![Animated preview of Vectron’s startup, focus trail, and live Context panel](docs/vectron-preview.gif)
 
-[Watch the full walkthrough (1:17)](https://github.com/user-attachments/assets/311daf73-c9f3-48c2-8400-a184196a1ee7) · Recorded in stock Herdr with sample sessions.
+[Download the full walkthrough (1:38)](docs/vectron-walkthrough.mp4?raw=true) · One continuous release review in stock Herdr with a sample project and simulated agents.
 
 ## Install
 
@@ -15,6 +15,8 @@ Give your agent this instruction in Herdr.
 For a manual install, copy the files from [layouts](layouts), the [mod folders](mods) containing a main.js, and [themes/vectron.json](themes/vectron.json) into their matching directories under ~/.config/herdr-app. Keep the existing files when names collide. Merge the two sections in [keys.json](keys.json) into your own keys.json. Then select **Vectron** in Herdr or run this command.
 
     herdr-app do layout.switch '{"name":"vectron"}'
+
+Vectron’s Mod Manager includes packaged themes when it installs a layout. Tests and README media stay in the source checkout.
 
 Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and reads local agent session files. Its reported counts and estimates are labeled separately. Files and Changes run filesystem and Git commands in the selected workspace. The optional browser tools use Herdr Browser if installed. The usage panel reads supported login files and contacts the matching Claude, ChatGPT, or Copilot usage service when a corresponding agent is visible. The Mods screen and Git graph can query GitHub.
 
@@ -30,14 +32,18 @@ In live Context, a growing category flashes over the newly added portion of its 
 | Alt+Enter and Alt+Shift+Enter | Split right or down. A beam draws along the corresponding edge of the new pane header. |
 | Shift+F2 or right-click a space → Rename | Rename a space |
 | **+** in the tab bar | Start an agent. Type to filter the list. |
+| Top-right usage meter | See quota usage. The meter flashes when a live value changes. Click for reset details. |
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
 | Changes → Graph → Select a commit | Trace its ancestry through the loaded history, including both parents of a merge |
+| Changes → Select a file → Click a rail mark | Jump to a diff hunk. Click a cluster more than once to cycle through its hunks. |
 | Context → Categories | Show the full category legend and filter by category |
 | Context → Select an event | Open its preview |
 | Context → Count details | See the model, window size, and how the counts were calculated |
 | Context → Expand | Open the larger inspector |
 | **History** in a focused terminal header | Return to live output. The header pulses when the terminal reaches the bottom. |
+
+The diff rail sweeps once when you open a file. **Preview range** means the rail is scaled to the line range covered by the loaded diff. For new files with a known size, **File range** shows the whole file. **Diff preview clipped** indicates there is more of the diff beyond the preview.
 
 The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming and agent filtering use the command palette's typing flash.
 

@@ -18,6 +18,10 @@ export function findPackages(files) {
     pkg.layouts = files.filter(
       (f) => f.startsWith(`${base}layouts/`) && !f.slice(base.length + 8).includes("/"),
     );
+    const themesDir = `${base}themes/`;
+    pkg.themes = files.filter(
+      (f) => f.startsWith(themesDir) && /^[^/]+\.json$/.test(f.slice(themesDir.length)),
+    );
     pkg.recipe = files.includes(`${base}RECIPE.md`);
     pkg.preview = files.includes(`${base}preview.png`);
     pkg.keys = files.includes(`${base}keys.json`);
@@ -87,7 +91,7 @@ function parseKeys(text) {
 }
 
 // What installing `pkg` would do, without doing it. `record` is the earlier install of the same
-// package (an update): its own mods and layouts are replaced, anything else with the same name is
+// package (an update): its own files are replaced, anything else with the same name is
 // a clash and blocks the install, as AGENTS.md never overwrites.
 export async function planInstall(
   io,
@@ -96,13 +100,19 @@ export async function planInstall(
   const base = pkg.prefix ? `${dir}/${pkg.prefix}` : dir;
   const ownMods = new Set(record?.mods ?? []);
   const ownLayouts = new Set(record?.layouts ?? []);
+  const ownThemes = new Set(record?.themes ?? []);
   const layouts = pkg.layouts.map((f) => f.split("/").at(-1));
+  const themes = (pkg.themes ?? []).map((f) => f.split("/").at(-1));
   const clashes = [
     ...pkg.mods.filter((m) => existingMods.includes(m) && !ownMods.has(m)).map((m) => `mods/${m}`),
     ...layouts
       .filter((l) => existingLayouts.includes(l) && !ownLayouts.has(l))
       .map((l) => `layouts/${l}`),
   ];
+  for (const theme of themes) {
+    if (!ownThemes.has(theme) && await pathExists(io, `${appHome}/themes/${theme}`))
+      clashes.push(`themes/${theme}`);
+  }
 
   const theirs = pkg.keys ? parseKeys(await io.readText(`${base}/keys.json`)) : {};
   const mine = parseKeys(await io.readText(`${appHome}/keys.json`));
@@ -129,6 +139,7 @@ export async function planInstall(
     base,
     mods: pkg.mods,
     layouts,
+    themes,
     clashes,
     keyAdds,
     keyConflicts,
@@ -144,9 +155,10 @@ async function writeKeys(io, appHome, change) {
   await io.writeText(path, JSON.stringify(keys, null, 2) + "\n", previous);
 }
 
-const packagePaths = ({ mods = [], layouts = [] }) => [
+const packagePaths = ({ mods = [], layouts = [], themes = [] }) => [
   ...mods.map((name) => `mods/${name}`),
   ...layouts.map((name) => `layouts/${name}`),
+  ...themes.map((name) => `themes/${name}`),
 ];
 
 async function pathExists(io, path) {
@@ -194,7 +206,9 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
     backup = `${staging}/backup`;
     await run(io, "mkdir", [
       "-p",
-      ...[incoming, backup, appHome].flatMap((dir) => [`${dir}/mods`, `${dir}/layouts`]),
+      ...[incoming, backup, appHome].flatMap((dir) => [
+        `${dir}/mods`, `${dir}/layouts`, `${dir}/themes`,
+      ]),
     ]);
     for (const path of incomingFiles) {
       const flags = path.startsWith("mods/") ? ["-R"] : [];
@@ -267,6 +281,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
     sha,
     mods: plan.mods,
     layouts: plan.layouts,
+    themes: plan.themes ?? [],
     keys: dedupeKeys(keys),
     risks: plan.risks.map((r) => r.label),
     at: new Date().toISOString(),
@@ -284,8 +299,10 @@ function dedupeKeys(keys) {
 // Removes what the record says the manager installed. A key is removed only while it still runs
 // the action the package added: one the person rebound since then stays.
 export async function uninstall(io, { appHome, record }) {
-  for (const m of record.mods) await run(io, "rm", ["-rf", `${appHome}/mods/${m}`]);
-  for (const l of record.layouts ?? []) await run(io, "rm", ["-f", `${appHome}/layouts/${l}`]);
+  for (const path of packagePaths(record)) {
+    const flags = path.startsWith("mods/") ? "-rf" : "-f";
+    await run(io, "rm", [flags, `${appHome}/${path}`]);
+  }
   if (record.keys?.length) {
     await writeKeys(io, appHome, (all) => {
       for (const k of record.keys) {
