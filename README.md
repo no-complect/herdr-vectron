@@ -2,7 +2,7 @@
 
 Vectron is a layout for Herdr with dark, boxed panels, a bright vector palette, and three-stage flashes on interaction. The Context panel follows the selected local Codex, Claude Code, Grok Build, or Antigravity CLI session.
 
-[![Animated preview of Vectron’s focus trails, typing flashes, and live Context panel](docs/vectron-preview.gif)](https://github.com/user-attachments/assets/311daf73-c9f3-48c2-8400-a184196a1ee7)
+![Animated preview of Vectron’s focus trails, typing flashes, and live Context panel](docs/vectron-preview.gif)
 
 [Watch the full walkthrough (1:17)](https://github.com/user-attachments/assets/311daf73-c9f3-48c2-8400-a184196a1ee7) · Recorded in stock Herdr with sample sessions.
 
