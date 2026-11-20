@@ -134,3 +134,44 @@ test("tab switches leave a trail and pane focus changes keep the current tab’s
   space = "s2";
   assert.equal(byId(tabs.render(cx), "focus-trail-t1-1"), undefined);
 });
+
+test("a split lights the new header in its requested direction and ignores existing panes", async () => {
+  const { cx, timers } = timeline();
+  const time = { now: 1000 };
+  const values = new Map();
+  const calls = [];
+  const source = { pane: "p1", tab: "t1", terminal: "s1", focused: true };
+  const added = { pane: "p2", tab: "t1", terminal: "s2", focused: false };
+  const panes = [source];
+  let current = source;
+  const { default: Pane } = await loadMod("vectron-pane", "main.js", {
+    herdr: {
+      panes: () => panes, focused: () => current, props: () => current,
+      theme: () => theme, home: () => "/fixture",
+      run: (command, args) => calls.push([command, { ...args }]),
+      shared: (key) => values.get(key), setShared: (key, value) => values.set(key, value),
+      exec: noop, layout: noop, window: noop, appHome: noop, watchFolder: noop, readTextFile: noop,
+    },
+  }, clock(time));
+
+  const header = new Pane();
+  header.init({}, cx);
+  header.hovered = true;
+  const view = header.render(cx);
+  const beam = (tree) => find(tree, (node) => node.calls.id?.[0].startsWith("split-beam-"));
+  const initialTimers = timers.length;
+  byId(view, "ph-d-p1").calls.on_click[0](null, { ...cx, stop_propagation: noop });
+  assert.deepEqual(calls, [["pane.split", { direction: "down", pane: "p1" }]]);
+  assert.equal(beam(header.render(cx)), undefined);
+  panes.push(added);
+  current = added;
+  const newHeader = new Pane();
+  newHeader.init({}, cx);
+  const first = newHeader.render(cx);
+  assert.equal(beam(first)?.calls.w[0], 0);
+  first.calls.on_size_change[0]({ width: 320, height: 30 }, cx);
+  timers[initialTimers](cx);
+  assert.equal(beam(newHeader.render(cx))?.calls.w[0], 320);
+  timers.slice(initialTimers + 1).forEach((fire) => fire(cx));
+  assert.equal(beam(newHeader.render(cx)), undefined);
+});

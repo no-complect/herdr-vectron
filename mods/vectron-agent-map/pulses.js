@@ -22,14 +22,15 @@ export class AttentionPulses {
     this.previous = new Map(nodes.map((node) => [node.address, node]));
     for (const [address, signal] of this.active) {
       const node = this.previous.get(address);
-      if (node?.status !== "blocked" || node.parent !== signal.parent) this.active.delete(address);
+      if (node?.status !== signal.status || node.parent !== signal.parent) this.active.delete(address);
     }
 
     const started = [];
     for (const { address, parent, status } of nodes) {
       const before = previous.get(address);
-      if (!parent || status !== "blocked" || !before || before.status === "blocked") continue;
-      const signal = { address, parent, sequence: ++this.sequence, phase: "start" };
+      if (!parent || before?.parent !== parent || before.status === status) continue;
+      if (status !== "blocked" && status !== "done") continue;
+      const signal = { address, parent, status, sequence: ++this.sequence, phase: "start" };
       this.active.set(address, signal);
       started.push(signal);
     }

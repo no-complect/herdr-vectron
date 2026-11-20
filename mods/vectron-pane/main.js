@@ -16,6 +16,9 @@ import { act, readLive, watchLive, touches } from "./browser/client.js";
 import { Flash, flashColor } from "./beam.js";
 import { programIcon } from "./program-icon.js";
 import { FocusTrail } from "./focus-trail.js";
+import { SplitBeam } from "./split-beam.js";
+import { splitPane } from "./split-intent.js";
+import { activeArrival, arrivalMarker } from "./arrival.js";
 import { ScrollbackIndicator } from "./scrollback.js";
 
 // Keyboard navigation (keynav protocol, as in the other vectron mods' keynav.js): while a driver
@@ -59,6 +62,7 @@ const BROWSER = MOD + "/browser";
 
 export default class Pane extends View {
   focusTrail = new FocusTrail();
+  splitBeam = new SplitBeam();
 
   init(_props, cx) {
     this.hovered = false;
@@ -102,10 +106,6 @@ export default class Pane extends View {
     if (!this.live) return;
     this.hideNotes();
     await act(this.terminal, "native", { on: false });
-  }
-
-  me() {
-    return panes().find((p) => p.pane === props()?.pane);
   }
 
   async reload(cx) {
@@ -204,7 +204,8 @@ export default class Pane extends View {
       )
       .on_click((_e, cx) => {
         cx.stop_propagation();
-        run(command, args);
+        if (command === "pane.split") splitPane(args.direction, args.pane);
+        else run(command, args);
       })
       .child(svg(MOD + "/" + icon + ".svg").size(14));
   }
@@ -395,10 +396,10 @@ export default class Pane extends View {
     );
   }
 
-  updateHeaderFlash(p, t, cx) {
+  updateHeaderFlash(p, t, cx, splitting) {
     const previous = this.previousPane;
     this.previousPane = p;
-    if (!p.focused || !p.terminal) return;
+    if (!p.focused || !p.terminal || splitting) return;
 
     const entered = !previous?.focused || previous.terminal !== p.terminal;
     const startedWorking = p.status === "working" && previous?.status !== "working";
@@ -410,7 +411,9 @@ export default class Pane extends View {
 
   render(cx) {
     const t = theme();
-    const p = this.me();
+    const all = panes();
+    const pane = props()?.pane;
+    const p = all.find((item) => item.pane === pane);
     const browser = this.live && p?.terminal === this.terminal;
     const history = this.scrollback.observe(browser ? null : p, cx);
     if (!p) {
@@ -420,12 +423,21 @@ export default class Pane extends View {
     const focus = focused();
     this.focusTrail.update(focus?.tab === p.tab ? p.tab : null, focus?.pane);
     const trail = p.focused ? null : this.focusTrail.layer(p.pane, t.ansi6, cx);
+    this.splitBeam.observe(p, all, cx);
+    const split = this.splitBeam.layer(t);
+    const arrival = focus?.pane === pane ? activeArrival(focus) : null;
+    const measure = (size, cx) => this.splitBeam.measure(size, cx);
     if (browser) {
       return this.browserHeader(t, p)
         .relative()
-        .when(Boolean(trail), (el) => el.child(trail));
+        .on_size_change(measure)
+        .when(Boolean(trail), (el) => el.child(trail))
+        .when(Boolean(split), (el) => el.child(split))
+        .when(Boolean(arrival), (el) =>
+          el.child(arrivalMarker(arrival, t, "pane").absolute().top(0).right(2)),
+        );
     }
-    this.updateHeaderFlash(p, t, cx);
+    this.updateHeaderFlash(p, t, cx, Boolean(split));
     // The icon names the program; the header says what it works on: its title, else the folder.
     const clean = (p.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
     // A shell's title is often just its terminal address ("t4c"), which says nothing either.
@@ -437,12 +449,12 @@ export default class Pane extends View {
     const pulse = p.focused ? this.headerFlash.iconPulse("header", t) : null;
     const pic = programIcon(p.program, 14, t.dim, pulse);
     const st = p.status;
-    const pane = p.pane;
     const keyed = keyPane() === pane;
     return (
       h_flex()
         .id(`pane-head-${pane}`)
         .relative()
+        .on_size_change(measure)
         .size_full()
         .px(10)
         .gap(8)
@@ -465,6 +477,7 @@ export default class Pane extends View {
         .when(Boolean(trail), (el) => el.child(trail))
         .when(Boolean(pic), (el) => el.child(pic))
         .child(this.scrollback.layer())
+        .when(Boolean(split), (el) => el.child(split))
         .child(
           div()
             .flex_none()
@@ -507,6 +520,7 @@ export default class Pane extends View {
           ),
         )
         .when(st === "done", (el) => el.child(div().size(7).flex_none().rounded(0).bg(t.done)))
+        .when(Boolean(arrival), (el) => el.child(arrivalMarker(arrival, t, "pane")))
         .when(Boolean(history), (el) => el.child(history))
         // A zoomed pane shows only its unzoom button, always.
         .when(p.zoomed, (el) =>

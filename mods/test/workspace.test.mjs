@@ -42,6 +42,9 @@ test("the shipped layout resolves its blocks, pane header, icons, theme, and sho
     [...objects(layout)].map(({ mod }) => mod).filter((name) => name?.startsWith("vectron-")),
   );
 
+  assert.equal(keys["alt-enter"], "vectron-tabs.split-right");
+  assert.equal(keys["alt-shift-enter"], "vectron-tabs.split-down");
+
   for (const name of ["bar", "spaces", "agents", "tabs", "pane", "files", "changes", "context"]) {
     assert.ok(modNames.has(`vectron-${name}`), name);
   }
@@ -63,7 +66,8 @@ test("the shipped layout resolves its blocks, pane header, icons, theme, and sho
   }
 });
 
-test("git history retains both merge parents and draws uncommitted changes as a dashed row", () => {
+test("Git ancestry follows both merge parents and excludes unrelated lanes and descendants", async () => {
+  const { ancestryDepths } = await import("../vectron-changes/graph/lanes.js");
   const [merge, left, right, base] = ["a", "b", "c", "d"].map((x) => x.repeat(40));
   const row = (hash, parents, refs) =>
     [hash, parents.join(" "), "Author", "", "1234", refs, "Subject"].join("\0") + "\0";
@@ -75,10 +79,17 @@ test("git history retains both merge parents and draws uncommitted changes as a 
   );
   assert.deepEqual(history[0].parents, [left, right]);
   assert.equal(history[0].head, true);
-  const graph = layoutLanes(withUncommitted(history, 2, merge));
-  assert.equal(graph.rows.length, 5);
-  assert.equal(graph.width, 2);
-  assert.ok(graph.rows[0].segments.every((line) => line.at(-1)));
+  const unrelated = { hash: "unrelated", parents: [base] };
+  const commits = withUncommitted([history[0], unrelated, ...history.slice(1)], 2, merge);
+  const { rows } = layoutLanes(commits);
+  const trace = ancestryDepths(commits, merge);
+  assert.deepEqual([...trace], [[merge, 0], [left, 1], [right, 1], [base, 2]]);
+  const lit = (row) => row.segments.filter((line) => line[6].some((source) => trace.has(source)));
+  assert.equal(lit(rows[0]).length, 0);
+  assert.ok(rows[0].segments.every((line) => line[5]));
+  assert.equal(lit(rows[1]).length, 2);
+  assert.equal(lit(rows[2]).length, 2);
+  assert.ok(rows[2].segments.some((line) => line[6].includes(unrelated.hash)));
   assert.throws(() => parseLog("unframed"), /Invalid history framing/);
 });
 

@@ -9,18 +9,23 @@ import { fileURLToPath } from "node:url";
 import { appendSnapshot } from "../vectron-context/append-snapshot.js";
 import { loadMod } from "./support/herdr.mjs";
 
-test("duplicate readers share one load and a cached snapshot survives an unchanged check", async () => {
+async function sessionReader() {
   const reads = [];
-  const { joinRead, recentSession } = await loadMod("vectron-context", "session-loads.js", {
-    herdr: {
-      appHome: () => "/fixture",
-      exec: (_name, args) => new Promise((resolve) => {
-        const request = JSON.parse(args[2]);
-        reads.push({ request, finish: (result) => resolve({ code: 0, stdout: JSON.stringify(result) }) });
-      }),
-    },
-  });
+  const host = {
+    appHome: () => "/fixture",
+    exec: (_name, args) => new Promise((resolve) => {
+      reads.push({
+        request: JSON.parse(args[2]),
+        finish: (result) => resolve({ code: 0, stdout: JSON.stringify(result) }),
+      });
+    }),
+  };
+  const session = await loadMod("vectron-context", "session-loads.js", { herdr: host });
+  return { reads, joinRead: session.joinRead, recentSession: session.recentSession };
+}
 
+test("duplicate readers share one load and a cached snapshot survives an unchanged check", async () => {
+  const { reads, joinRead, recentSession } = await sessionReader();
   const key = "same-session";
   const request = { path: "/fixture/session.jsonl" };
   const panel = joinRead(key, request);
@@ -40,18 +45,7 @@ test("duplicate readers share one load and a cached snapshot survives an unchang
 });
 
 test("manual Refresh waits for a fresh full read and coalesces requests only before that read starts", async () => {
-  const reads = [];
-  const { joinRead } = await loadMod("vectron-context", "session-loads.js", {
-    herdr: {
-      appHome: () => "/fixture",
-      exec: (_name, args) => new Promise((resolve) => {
-        reads.push({
-          request: JSON.parse(args[2]),
-          finish: (result) => resolve({ code: 0, stdout: JSON.stringify(result) }),
-        });
-      }),
-    },
-  });
+  const { reads, joinRead } = await sessionReader();
   const key = "session";
   const request = { provider: "codex", path: "/fixture/session.jsonl" };
   const previous = { path: request.path, signature: "old", checkpoint: { offset: 123 } };

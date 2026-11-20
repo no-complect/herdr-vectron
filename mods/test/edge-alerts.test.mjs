@@ -3,11 +3,13 @@ import test from "node:test";
 import { find, loadMod } from "./support/herdr.mjs";
 
 function agent(address, status, seq = 0) {
-  return { address, status, seq, title: address, space: "other", space_name: "Other space" };
+  return { address, status, seq, title: address, pane: address + "-pane", tab: "tab", space: "other", space_name: "Other space" };
 }
 
 async function topBar(agents) {
   const state = { agents, focus: { terminal: "shell", shown: null } };
+  const shared = new Map();
+  const session = new Map();
   const timers = [];
   const actions = [];
   const noop = () => {};
@@ -15,24 +17,28 @@ async function topBar(agents) {
     spawn: noop,
     notify: noop,
     stop_propagation: noop,
-    timer: { after: (ms, callback) => timers.push({ ms, finish: () => callback(cx) }) },
+    timer: { after: (_ms, callback) => timers.push(() => callback(cx)) },
   };
   const { default: Bar } = await loadMod("vectron-bar", "main.js", {
     herdr: {
       agents: () => state.agents,
       focused: () => state.focus,
       layout: noop, window: noop, home: noop, readTextFile: noop, appHome: noop, exec: noop,
-      spaces: () => [],
+      spaces: () => [{ id: "other", active: true, name: "Other space", tabs: [] }],
       props: () => ({ part: "left" }),
       theme: () => ({ blocked: "#ff5775", done: "#7ab5ff" }),
-      shared: noop, setShared: noop,
+      shared: (key) => shared.get(key), setShared: (key, value) => shared.set(key, value),
       run: (name, args) => actions.push([name, { ...args }]),
     },
+  }, {
+    sessionStorage: { getItem: (key) => session.get(key), setItem: (key, value) => session.set(key, value) },
+    window: { viewport_size: () => ({ width: 1400 }) },
   });
   const bar = new Bar();
   bar.init({}, cx);
   return {
-    actions, state, timers, cx,
+    actions, state, timers, cx, shared, start: () => new Bar(),
+    frame: () => bar.render(cx),
     render() {
       const view = bar.render(cx);
       return {
@@ -45,7 +51,7 @@ async function topBar(agents) {
 }
 
 test("the top edge groups pending states and opens the newest background agent", async () => {
-  const { render, actions, cx, state, timers } = await topBar([
+  const { render, frame, actions, cx, state, timers, shared } = await topBar([
     agent("latest-block", "blocked", 10),
     agent("old-block", "blocked", 1),
     agent("completed", "done", 12),
@@ -61,10 +67,20 @@ test("the top edge groups pending states and opens the newest background agent",
 
   blocked.calls.on_click[0](null, cx);
   done.calls.on_click[0](null, cx);
+  assert.equal(shared.get("vectron.edge-arrival")?.terminal, "completed");
   assert.deepEqual(actions, [
     ["agent.focus", { terminal: "latest-block" }],
     ["agent.focus", { terminal: "completed" }],
   ]);
+
+  state.focus = { terminal: "completed", space: "other", tab: "tab", pane: "completed-pane" };
+  const arrival = (tree) => find(tree, (node) => node.calls.id?.[0].startsWith("edge-arrival-space-"));
+  assert.deepEqual(arrival(frame())?.nodes, ["✓"]);
+  timers[0]();
+  timers[1]();
+  assert.ok(arrival(frame()), "an earlier click cannot remove the newer marker");
+  timers.at(-1)();
+  assert.equal(arrival(frame()), undefined);
 
   state.agents = [agent("latest-block", "working"), agent("old-block", "blocked")];
   blocked.calls.on_click[0](null, cx);
@@ -79,14 +95,11 @@ test("only a new background attention state pulses, with no replay on redraw or 
   state.agents = [agent("agent", "blocked", 2)];
   const first = render();
   assert.ok(first.pulse);
-  assert.equal(timers.length, 2);
-  assert.ok(timers[0].ms < timers[1].ms);
   assert.equal(render().pulse.calls.id[0], first.pulse.calls.id[0]);
   assert.equal(timers.length, 2);
-  timers[0].finish();
+  timers[0]();
   assert.equal(render().pulse.calls.opacity[0], 0);
-  timers[1].finish();
-  assert.equal(render().pulse, undefined);
+  timers[1]();
   assert.ok(render().blocked);
 
   state.focus.terminal = "agent";
@@ -105,12 +118,30 @@ test("a resolved alert and its timers cannot clear a more recent pulse", async (
   state.agents[1] = agent("b", "done", 3);
   const secondId = render().pulse.calls.id[0];
   assert.notEqual(firstId, secondId);
-  timers[0].finish();
-  timers[1].finish();
+  timers[0]();
+  timers[1]();
   assert.equal(render().pulse.calls.id[0], secondId);
   assert.equal(render().pulse.calls.opacity[0], 1);
 
   state.agents = [];
   assert.deepEqual(render(), { blocked: undefined, done: undefined, pulse: undefined });
-  assert.doesNotThrow(() => timers.slice(2).forEach(({ finish }) => finish()));
+  assert.doesNotThrow(() => timers.slice(2).forEach((fire) => fire()));
+});
+
+test("cabinet starts on the first measured bar, draws the logo, then sweeps once per session", async () => {
+  const { cx, frame, timers, start } = await topBar([]);
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const measure = (tree) => tree.calls.on_size_change[0]({ width: 400 }, cx);
+  measure(frame());
+  assert.equal(byId(frame(), "cabinet-logo-reveal")?.calls.h[0], 0);
+  timers.shift()();
+  assert.equal(byId(frame(), "cabinet-logo-reveal")?.calls.h[0], 14);
+  const startX = byId(frame(), "cabinet-sweep").calls.left[0];
+  timers.shift()();
+  assert.ok(byId(frame(), "cabinet-sweep").calls.left[0] > startX);
+  timers.shift()();
+  assert.equal(byId(frame(), "cabinet-sweep"), undefined);
+  const other = start();
+  measure(other.render(cx));
+  assert.equal(byId(other.render(cx), "cabinet-logo-reveal"), undefined);
 });
