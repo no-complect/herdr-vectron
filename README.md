@@ -18,6 +18,8 @@ Tested with stock Herdr 0.1.16 on macOS. The Context panel requires Python 3 and
 
 ## Controls
 
+In Context’s live **Since compact** view, a recorded Codex or Claude compaction can shrink the captured-text bar. The previous extent fades out as the panel shows the estimates before and after.
+
 | Control | Action |
 | --- | --- |
 | ⌘P | Find a tab, space, or agent |

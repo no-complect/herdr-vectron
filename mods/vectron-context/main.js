@@ -17,6 +17,7 @@ import {
 } from "herdr";
 import { categories, categoryOf, ContextEvents, formatCount, reportedUsageAt } from "./model.js";
 import { Flash, flashColor } from "./beam.js";
+import { CompactionAfterimage, afterimageLayer, compactionComparison } from "./afterimage.js";
 import { layoutVisibility } from "./visibility.js";
 import { focusedSession, providerNames } from "./target.js";
 
@@ -47,6 +48,7 @@ async function readSession(request, timeout = 15000) {
 
 export default class ContextInspector extends View {
   contextEvents = new ContextEvents();
+  afterimage = new CompactionAfterimage();
 
   init(_props, cx) {
     this.inputGlow = new InputGlow();
@@ -93,6 +95,7 @@ export default class ContextInspector extends View {
 
   close() {
     this.closed = true;
+    this.afterimage.clear();
     this.code?.release();
     if (panelInstance === this) panelInstance = null;
   }
@@ -173,6 +176,7 @@ export default class ContextInspector extends View {
   resetSession(identity) {
     this.identity = identity;
     this.dataFlash.burst = null;
+    this.afterimage.clear();
     this.contextEvents = new ContextEvents();
     this.data = null;
     this.error = null;
@@ -221,6 +225,7 @@ export default class ContextInspector extends View {
         if (previous?.path && !sameSession) {
           this.replayCutoff = null;
           this.dataFlash.burst = null;
+          this.afterimage.clear();
           this.clearDetail();
         }
         this.data = response.unchanged ? { ...previous, ...response } : response;
@@ -324,10 +329,15 @@ export default class ContextInspector extends View {
   flashUpdatedCounts(cx, previous, current) {
     const before = reportedUsageAt(previous, null);
     const after = reportedUsageAt(current, null);
-    const beforeCounts = this.contextEvents
-      .capture(previous, null, this.showWholeHistory).totals.counts;
-    const afterCounts = this.contextEvents
-      .capture(current, null, this.showWholeHistory).totals.counts;
+    const previousTotals = this.contextEvents.capture(previous, null, this.showWholeHistory).totals;
+    const currentTotals = this.contextEvents.capture(current, null, this.showWholeHistory).totals;
+    const beforeCounts = previousTotals.counts;
+    const afterCounts = currentTotals.counts;
+
+    if (!this.showWholeHistory && this.replayCutoff === null) {
+      const comparison = compactionComparison(previous, current, previousTotals.sum, currentTotals.sum);
+      if (comparison) this.afterimage.start(cx, comparison);
+    }
 
     const targets = new Map();
     if (after?.window && (before?.input !== after.input || before?.window !== after.window)) {
@@ -452,6 +462,8 @@ export default class ContextInspector extends View {
 
   breakdown({ counts, sum }) {
     const t = theme();
+    const image =
+      this.replayCutoff === null && !this.showWholeHistory ? this.afterimage.current : null;
     const active = categories.filter((c) => counts[c.id]);
     const chip = (c) =>
       this.button(
@@ -487,38 +499,51 @@ export default class ContextInspector extends View {
           .child(
             div()
               .text_color(t.foreground)
-              .child(`~${formatCount(sum)} tokens`),
+              .child(
+                image
+                  ? `~${formatCount(image.before)} → ~${formatCount(image.after)} tokens`
+                  : `~${formatCount(sum)} tokens`,
+              ),
           ),
       )
       .child(
-        h_flex()
+        div()
           .id("context-category-bar")
+          .relative()
           .h(18)
           .w_full()
           .rounded(3)
           .overflow_hidden()
           .bg(t.surface)
-          .children(
-            active.map((c) =>
-              div()
-                .id(`bar-${c.id}`)
-                .h_full()
-                .w(`${(counts[c.id] / sum) * 100}%`)
-                .flex_none()
-                .relative()
-                .bg(c.color + "52")
-                .child(
-                  this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
-                )
-                .child(this.dataFlash.layer(c.id, "fill"))
-                .cursor_pointer()
-                .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
-                .on_click((_e, cx) => {
-                  this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
-                  cx.notify();
-                }),
+          .on_size_change(({ width }, cx) => {
+            if (this.categoryBarWidth === width) return;
+            this.categoryBarWidth = width;
+            if (this.afterimage.current) cx.notify();
+          })
+          .child(
+            h_flex().size_full().children(
+              active.map((c) =>
+                div()
+                  .id(`bar-${c.id}`)
+                  .h_full()
+                  .w(`${(counts[c.id] / sum) * 100}%`)
+                  .flex_none()
+                  .relative()
+                  .bg(c.color + "52")
+                  .child(
+                    this.breathingFill(c.id, c.color, Math.round(403 + categories.indexOf(c) * 46.6)),
+                  )
+                  .child(this.dataFlash.layer(c.id, "fill"))
+                  .cursor_pointer()
+                  .tooltip(`${c.label}: ~${formatCount(counts[c.id])} estimated tokens`)
+                  .on_click((_e, cx) => {
+                    this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
+                    cx.notify();
+                  }),
+              ),
             ),
-          ),
+          )
+          .when(Boolean(image), (el) => el.child(afterimageLayer(image, this.categoryBarWidth, t))),
       )
       .child(legend)
       .when(Boolean(this.selectedCategory), (el) =>
@@ -785,6 +810,7 @@ export default class ContextInspector extends View {
           )
           .child(
             this.button("context-replay-event", "Replay through this event", () => {
+              this.afterimage.clear();
               this.replayCutoff = Number(event.id);
             }),
           )
@@ -804,6 +830,7 @@ export default class ContextInspector extends View {
       target = this.target();
     const next = this.targetIdentity(target);
     const visible = this.visible();
+    if (!visible) this.afterimage.clear();
     if (next !== this.identity && visible) this.refresh(cx);
     const shownTarget = visible ? (target?.address ?? "") : null;
     // A hidden stack child might not render until it is selected again.
@@ -948,6 +975,7 @@ export default class ContextInspector extends View {
                   "context-history",
                   "Whole history",
                   () => {
+                    this.afterimage.clear();
                     this.showWholeHistory = true;
                   },
                   this.showWholeHistory,
