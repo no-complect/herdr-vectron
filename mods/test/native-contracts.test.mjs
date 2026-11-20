@@ -428,10 +428,131 @@ test("Context previews show byte offsets and legacy line numbers", async () => {
     [{}, ""],
   ]) {
     view.data = { events: [{ ...event, ...position }] };
-    const location = find(view.preview({}), (node) => node.calls.tooltip?.[0]?.startsWith(source));
+    const location = find(view.preview(), (node) => node.calls.tooltip?.[0]?.startsWith(source));
     assert.deepEqual(location.nodes, [`session.jsonl${suffix}`]);
     assert.equal(location.calls.tooltip[0], `${source}${suffix}`);
   }
+});
+
+test("Context gives the timeline the empty preview space and releases the editor when unpinned", async () => {
+  const requests = [];
+  let released = 0;
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: async (_program, args) => {
+        requests.push(JSON.parse(args[2]));
+        return { code: 0, stdout: JSON.stringify({ text: "Fixture detail" }) };
+      },
+    },
+    "gpui-base": { EditorState: { new: (options) => ({ options, release: () => released++ }) } },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.shownTarget = "";
+  view.controlsFlash = { layer: noop, start: noop };
+  const event = {
+    id: "0", category: "user", label: "Fixture event", tokens: 3, bytes: 12, segment: 0,
+    source: "/fixture/session.jsonl", offset: 0, teaser: "Fixture preview",
+  };
+  view.data = { path: event.source, events: [event] };
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const timeline = (tree) => find(tree, (node) => node.kind === "uniform_list" && node.args[0] === "context-events");
+
+  for (const width of [360, 1000]) {
+    view.width = width;
+    const initial = view.render(context);
+    assert.equal(view.preview(), null);
+    assert.equal(byId(initial, "context-preview"), undefined);
+
+    timeline(initial).calls.on_item_click[0](event.id, context);
+    await flush();
+    const shown = view.render(context);
+    const preview = byId(shown, "context-preview");
+    assert.ok(preview);
+    assert.equal(find(preview, (node) => node.kind === "editor").args[0].options.value, "Fixture detail");
+    byId(preview, "context-replay-event").calls.on_click[0](null, context);
+    assert.equal(view.replayCutoff, 0);
+    byId(preview, "context-unpin").calls.on_click[0](null, context);
+
+    const closed = view.render(context);
+    assert.ok(timeline(closed));
+    assert.equal(byId(closed, "context-preview"), undefined);
+    assert.ok(byId(closed, "context-live"));
+  }
+  assert.equal(released, 2);
+  assert.deepEqual(requests.map((request) => [request.action, request.offset]), [["detail", 0], ["detail", 0]]);
+});
+
+test("Context folds the legend to the largest categories and preserves filtering and bar access", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const { context } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.controlsFlash = { layer: noop, start: noop };
+  const counts = { runtime: 4, user: 10, results: 80, files: 70, instructions: 50 };
+  const totals = { counts, sum: 214 };
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const legend = (tree) => Object.keys(counts).filter((category) => byId(tree, `category-${category}`));
+  const click = (tree, id) => byId(tree, id).calls.on_click[0](null, context);
+
+  for (const width of [360, 1000]) {
+    view.width = width;
+    const compact = view.breakdown(totals);
+    assert.deepEqual(legend(compact), ["results", "files", "instructions"]);
+    assert.ok(Object.keys(counts).every((id) => byId(compact, `bar-${id}`)));
+
+    click(compact, "context-categories");
+    const expanded = view.breakdown(totals);
+    assert.deepEqual(legend(expanded), Object.keys(counts));
+    click(expanded, "category-runtime");
+    click(expanded, "context-categories");
+    const filtered = view.breakdown(totals);
+    assert.equal(view.selectedCategory, "runtime");
+    assert.deepEqual(legend(filtered), ["runtime", "results", "files", "instructions"]);
+    click(filtered, "context-reset-filter");
+    assert.deepEqual(legend(view.breakdown(totals)), ["results", "files", "instructions"]);
+
+    click(view.breakdown(totals), "bar-user");
+    assert.equal(view.selectedCategory, "user");
+    assert.ok(byId(view.breakdown(totals), "category-user"));
+    click(view.breakdown(totals), "category-user");
+    assert.equal(view.selectedCategory, null);
+  }
+  assert.equal(byId(view.breakdown({ counts: { files: 70, user: 10 }, sum: 80 }), "context-categories"), undefined);
+});
+
+test("a preview closed and reopened on the same event ignores the first request's late response", async () => {
+  const reads = [];
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: () => new Promise((resolve) => reads.push((text) => resolve({ code: 0, stdout: JSON.stringify({ text }) }))),
+    },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.controlsFlash = { layer: noop, start: noop };
+  const event = { id: "1", source: "/fixture/session.jsonl", category: "user", tokens: 3, bytes: 10 };
+  view.data = { path: event.source, events: [event] };
+
+  view.inspect(event, context);
+  const unpin = find(view.preview(), (node) => node.calls.id?.[0] === "context-unpin");
+  unpin.calls.on_click[0](null, context);
+  view.inspect(event, context);
+  assert.equal(reads.length, 2);
+
+  reads[1]("fresh preview");
+  await new Promise(setImmediate);
+  assert.equal(view.details, "fresh preview");
+  reads[0]("late preview");
+  await flush();
+  assert.equal(view.details, "fresh preview");
 });
 
 test("Context meters retain their native pulse rates and flash only changed categories", async () => {

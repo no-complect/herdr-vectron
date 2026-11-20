@@ -50,12 +50,13 @@ export default class ContextInspector extends View {
     this.pendingRead = null;
     this.error = null;
     this.selectedCategory = null;
+    this.showCategories = false;
     this.timelineOrder = "timeline";
     this.showWholeHistory = false;
     this.replayCutoff = null;
     this.pinned = null;
     this.details = null;
-    this.detailKey = null;
+    this.detailRead = null;
     this.manual = new Map();
     const selectedPath =
       options.selectedPath ??
@@ -159,7 +160,7 @@ export default class ContextInspector extends View {
     this.code?.release();
     this.code = null;
     this.details = null;
-    this.detailKey = null;
+    this.detailRead = null;
     this.pinned = null;
   }
 
@@ -275,14 +276,16 @@ export default class ContextInspector extends View {
     const changed = this.pinned !== event.id;
     this.pinned = event.id;
     const key = `${this.data?.path}:${event.id}`;
-    if (key === this.detailKey) {
+    if (key === this.detailRead?.key) {
       if (changed) cx.notify();
       return;
     }
-    this.detailKey = key;
+    const read = { key };
+    this.detailRead = read;
     this.code?.release();
     this.code = null;
     this.details = null;
+    const isCurrent = () => !this.closed && this.detailRead === read;
     cx.spawn(async (cx) => {
       try {
         const detail = await readSession(
@@ -296,7 +299,7 @@ export default class ContextInspector extends View {
           },
           10000,
         );
-        if (this.closed || this.detailKey !== key) return;
+        if (!isCurrent()) return;
         this.details = detail.text || detail.error || "This event has no text preview.";
         if (detail.truncated) this.details += "\n\n[Preview limited to 24,000 characters]";
         this.code = EditorState.new({
@@ -307,9 +310,9 @@ export default class ContextInspector extends View {
           font_size: 12,
         });
       } catch {
-        if (this.detailKey === key) this.details = "The source could not be previewed.";
+        if (isCurrent()) this.details = "The source could not be previewed.";
       } finally {
-        cx.notify();
+        if (isCurrent()) cx.notify();
       }
     });
     cx.notify();
@@ -489,31 +492,56 @@ export default class ContextInspector extends View {
     const image =
       this.replayCutoff === null && !this.showWholeHistory ? this.afterimage.current : null;
     const active = categories.filter((c) => counts[c.id]);
+    const listed =
+      this.showCategories || active.length <= 3
+        ? [...active]
+        : [...active].sort((a, b) => counts[b.id] - counts[a.id]).slice(0, 3);
+    const selected = categories.find((category) => category.id === this.selectedCategory);
+    if (selected && !listed.includes(selected)) listed.push(selected);
+
     const chip = (c) =>
       this.button(
         `category-${c.id}`,
-        `${c.label}  ~${formatCount(counts[c.id])}`,
+        `${c.label}  ~${formatCount(counts[c.id] ?? 0)}`,
         () => {
           this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
         },
         this.selectedCategory === c.id,
       );
+    const chips = listed.map(chip);
+    if (active.length > 3) {
+      chips.push(
+        this.button(
+          "context-categories",
+          this.showCategories ? "Fewer categories" : "Categories",
+          () => {
+            this.showCategories = !this.showCategories;
+          },
+        ),
+      );
+    }
+    if (selected) {
+      chips.push(this.button("context-reset-filter", "Clear filter", () => {
+        this.selectedCategory = null;
+      }));
+    }
+
     const legend =
       this.width < 400
         ? v_flex()
             .gap(2)
             .children(
-              Array.from({ length: Math.ceil(active.length / 2) }, (_, i) =>
+              Array.from({ length: Math.ceil(chips.length / 2) }, (_, i) =>
                 h_flex()
                   .gap(3)
                   .children(
-                    active
+                    chips
                       .slice(i * 2, i * 2 + 2)
-                      .map((c) => chip(c).flex_1().min_w(0).px(3).py(3).text_size(9).truncate()),
+                      .map((el) => el.flex_1().min_w(0).px(3).py(3).text_size(9).truncate()),
                   ),
               ),
             )
-        : h_flex().gap(5).flex_wrap().children(active.map(chip));
+        : h_flex().gap(5).flex_wrap().children(chips);
     return v_flex()
       .gap(8)
       .child(
@@ -569,14 +597,7 @@ export default class ContextInspector extends View {
           )
           .when(Boolean(image), (el) => el.child(afterimageLayer(image, this.categoryBarWidth, t))),
       )
-      .child(legend)
-      .when(Boolean(this.selectedCategory), (el) =>
-        el.child(
-          this.button("context-reset-filter", "Show all categories", () => {
-            this.selectedCategory = null;
-          }),
-        ),
-      );
+      .when(chips.length > 0, (el) => el.child(legend));
   }
 
   pickerView(cx) {
@@ -762,17 +783,18 @@ export default class ContextInspector extends View {
       );
   }
 
-  preview(cx) {
-    const t = theme();
-    const event = this.pinned === null
-      ? undefined
-      : this.data?.events?.find((event) => event.id === this.pinned);
+  preview() {
+    if (this.pinned === null) return null;
+    const event = this.data?.events?.find((event) => event.id === this.pinned);
+    if (!event) return null;
 
+    const t = theme();
     let sourcePosition = "";
-    if (event?.offset != null) sourcePosition = ` · byte ${event.offset}`;
-    else if (event?.line != null) sourcePosition = `:${event.line}`;
+    if (event.offset != null) sourcePosition = ` · byte ${event.offset}`;
+    else if (event.line != null) sourcePosition = `:${event.line}`;
 
     return v_flex()
+      .id("context-preview")
       .flex_1()
       .min_w(0)
       .min_h(140)
@@ -781,71 +803,48 @@ export default class ContextInspector extends View {
       .rounded(4)
       .p(10)
       .gap(8)
-      .when(!event, (el) =>
-        el.child(
-          div()
-            .p(10)
-            .text_size(12)
-            .text_color(t.muted)
-            .child(
-              "Click an event to inspect its preview. Choose Largest to find the biggest recorded contributions.",
-            ),
-        ),
-      )
-      .when(Boolean(event), (el) =>
-        el
-          .child(
-            h_flex()
-              .gap(8)
-              .items_center()
-              .child(
-                div()
-                  .flex_1()
-                  .min_w(0)
-                  .truncate()
-                  .text_size(12)
-                  .font_semibold()
-                  .text_color(t.foreground)
-                  .child(event.label),
-              )
-              .when(Boolean(this.pinned), (e) =>
-                e.child(
-                  this.button("context-unpin", "Unpin", () => {
-                    this.pinned = null;
-                  }),
-                ),
-              ),
-          )
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
           .child(
             div()
-              .text_size(11)
-              .text_color(categoryOf(event.category).color)
-              .child(
-                `${categoryOf(event.category).label} · ~${formatCount(event.tokens)} tokens · ${formatCount(event.bytes)} bytes`,
-              ),
-          )
-          .child(
-            div()
-              .text_size(10)
-              .text_color(t.dim)
+              .flex_1()
+              .min_w(0)
               .truncate()
-              .tooltip(`${event.source}${sourcePosition}`)
-              .child(`${event.source.split("/").pop()}${sourcePosition}`),
+              .text_size(12)
+              .font_semibold()
+              .text_color(t.foreground)
+              .child(event.label),
           )
+          .child(this.button("context-unpin", "Unpin", () => this.clearDetail())),
+      )
+      .child(
+        div()
+          .text_size(11)
+          .text_color(categoryOf(event.category).color)
           .child(
-            this.button("context-replay-event", "Replay through this event", () => {
-              this.afterimage.clear();
-              this.replayCutoff = Number(event.id);
-            }),
-          )
-          .child(
-            this.code
-              ? Editor.new(this.code).flex_1().min_h(0)
-              : div()
-                  .text_size(12)
-                  .text_color(t.muted)
-                  .child(this.details || "Loading preview…"),
+            `${categoryOf(event.category).label} · ~${formatCount(event.tokens)} tokens · ${formatCount(event.bytes)} bytes`,
           ),
+      )
+      .child(
+        div()
+          .text_size(10)
+          .text_color(t.dim)
+          .truncate()
+          .tooltip(`${event.source}${sourcePosition}`)
+          .child(`${event.source.split("/").pop()}${sourcePosition}`),
+      )
+      .child(
+        this.button("context-replay-event", "Replay through this event", () => {
+          this.afterimage.clear();
+          this.replayCutoff = Number(event.id);
+        }),
+      )
+      .child(
+        this.code
+          ? Editor.new(this.code).flex_1().min_h(0)
+          : div().text_size(12).text_color(t.muted).child(this.details || "Loading preview…"),
       );
   }
 
@@ -885,6 +884,7 @@ export default class ContextInspector extends View {
       this.timelineOrder,
     );
     const usage = reportedUsageAt(this.data, this.replayCutoff);
+    const preview = this.preview();
     const wide = this.width > 720;
     const body = (wide ? h_flex().gap(12) : v_flex().gap(10)).items_stretch();
     return v_flex()
@@ -1024,7 +1024,7 @@ export default class ContextInspector extends View {
               .min_h(0)
               .overflow_hidden()
               .child(this.timelineView(entries).when(wide, (e) => e.h_full()))
-              .child(this.preview(cx).when(wide, (e) => e.h_full())),
+              .when(Boolean(preview), (el) => el.child(preview.when(wide, (e) => e.h_full()))),
           )
           .child(
             h_flex()
