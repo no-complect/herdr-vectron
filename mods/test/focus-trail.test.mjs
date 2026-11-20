@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { find, loadMod } from "./support/herdr.mjs";
 
@@ -17,6 +18,12 @@ function timeline() {
   };
   return { cx, timers };
 }
+
+test("both mod bundles use the same focus trail behavior", async () => {
+  const load = (mod) => readFile(new URL(`../${mod}/focus-trail.js`, import.meta.url), "utf8");
+  const [pane, tabs] = await Promise.all([load("vectron-pane"), load("vectron-tabs")]);
+  assert.equal(pane, tabs);
+});
 
 test("the trail remembers the last two departures, clears on scope changes, and ignores non-pane focus", async () => {
   const time = { now: 1000 };
@@ -45,7 +52,7 @@ test("the trail remembers the last two departures, clears on scope changes, and 
 });
 
 test("the trace fades once and an old timer cannot change a newer trace for the same frame", async () => {
-  const { FocusTrail } = await loadMod("vectron-pane", "focus-trail.js", {}, clock({ now: 1000 }));
+  const { FocusTrail } = await loadMod("vectron-tabs", "focus-trail.js", {}, clock({ now: 1000 }));
   const trail = new FocusTrail();
   const { cx, timers } = timeline();
   trail.update("space-1", "t1");
@@ -91,4 +98,39 @@ test("pane headers paint a trail for departed focus within their tab and clear i
   assert.ok(byId(header.render(cx), "focus-trail-p1-1"));
   focus = { pane: "x", tab: "tab-2" };
   assert.equal(byId(header.render(cx), "focus-trail-p1-1"), undefined);
+});
+
+test("tab switches leave a trail and pane focus changes keep the current tab’s accent", async () => {
+  const { cx } = timeline();
+  let active = "t1";
+  let shell = "pane-1";
+  let space = "s1";
+  const model = () => [{
+    id: space, active: true,
+    tabs: ["t1", "t2", "t3"].map((id) => ({ id, name: id, active: id === active })),
+  }];
+  const { default: Tabs } = await loadMod("vectron-tabs", "main.js", {
+    herdr: {
+      spaces: model,
+      panes: () => model()[0].tabs.map(({ id }) => ({
+        tab: id, terminal: `${id}-shell`, title: "Shell", program: { name: "Shell", shell: true },
+      })),
+      terminals: () => [],
+      focused: () => ({ terminal: shell }),
+      props: () => ({}), theme: () => theme,
+      run: noop, layout: noop, shared: noop, setShared: noop, openOverlay: noop,
+      exec: noop, readTextFile: noop, home: noop, appHome: noop, nextCommand: noop, notify: noop,
+    },
+  }, { localStorage: { getItem: () => null }, ...clock({ now: 1000 }) });
+  const tabs = new Tabs();
+  tabs.init({}, cx);
+  tabs.render(cx);
+  shell = "pane-2";
+  assert.equal(byId(tabs.render(cx), "focus-trail-t1-1"), undefined);
+  active = "t2";
+  const strip = tabs.render(cx);
+  assert.ok(byId(strip, "focus-trail-t1-1"));
+  assert.ok(find(byId(strip, "tab-t2"), (node) => node.calls.bg?.[0] === theme.accent));
+  space = "s2";
+  assert.equal(byId(tabs.render(cx), "focus-trail-t1-1"), undefined);
 });
