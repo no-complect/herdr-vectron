@@ -39,6 +39,8 @@ The pane header flashes when a terminal gains focus or its selected agent starts
 
 In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
 
+Edge Alerts in the top bar pulse when a background agent needs input or finishes. The markers show how many agents are waiting or finished. Click a marker to open the most recently changed agent in that group.
+
 Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space.
 
 ## Development

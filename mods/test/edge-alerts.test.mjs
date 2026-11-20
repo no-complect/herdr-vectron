@@ -1,0 +1,116 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { find, loadMod } from "./support/herdr.mjs";
+
+function agent(address, status, seq = 0) {
+  return { address, status, seq, title: address, space: "other", space_name: "Other space" };
+}
+
+async function topBar(agents) {
+  const state = { agents, focus: { terminal: "shell", shown: null } };
+  const timers = [];
+  const actions = [];
+  const noop = () => {};
+  const cx = {
+    spawn: noop,
+    notify: noop,
+    stop_propagation: noop,
+    timer: { after: (ms, callback) => timers.push({ ms, finish: () => callback(cx) }) },
+  };
+  const { default: Bar } = await loadMod("vectron-bar", "main.js", {
+    herdr: {
+      agents: () => state.agents,
+      focused: () => state.focus,
+      layout: noop, window: noop, home: noop, readTextFile: noop, appHome: noop, exec: noop,
+      spaces: () => [],
+      props: () => ({ part: "left" }),
+      theme: () => ({ blocked: "#ff5775", done: "#7ab5ff" }),
+      shared: noop, setShared: noop,
+      run: (name, args) => actions.push([name, { ...args }]),
+    },
+  });
+  const bar = new Bar();
+  bar.init({}, cx);
+  return {
+    actions, state, timers, cx,
+    render() {
+      const view = bar.render(cx);
+      return {
+        blocked: find(view, (node) => node.calls.id?.[0] === "edge-alert-blocked"),
+        done: find(view, (node) => node.calls.id?.[0] === "edge-alert-done"),
+        pulse: find(view, (node) => node.calls.id?.[0].startsWith("edge-pulse-")),
+      };
+    },
+  };
+}
+
+test("the top edge groups pending states and opens the newest background agent", async () => {
+  const { render, actions, cx, state, timers } = await topBar([
+    agent("latest-block", "blocked", 10),
+    agent("old-block", "blocked", 1),
+    agent("completed", "done", 12),
+    agent("visible", "blocked", 13),
+    agent("running", "working", 14),
+  ]);
+  state.focus.shown = "visible";
+  const { blocked, done, pulse } = render();
+  assert.match(blocked.calls.tooltip[0], /2 agents need input.*latest-block/s);
+  assert.match(done.calls.tooltip[0], /completed/);
+  assert.equal(pulse, undefined);
+  assert.equal(timers.length, 0);
+
+  blocked.calls.on_click[0](null, cx);
+  done.calls.on_click[0](null, cx);
+  assert.deepEqual(actions, [
+    ["agent.focus", { terminal: "latest-block" }],
+    ["agent.focus", { terminal: "completed" }],
+  ]);
+
+  state.agents = [agent("latest-block", "working"), agent("old-block", "blocked")];
+  blocked.calls.on_click[0](null, cx);
+  assert.equal(actions.length, 2);
+  assert.match(render().blocked.calls.tooltip[0], /old-block/);
+  assert.equal(render().done, undefined);
+});
+
+test("only a new background attention state pulses, with no replay on redraw or focus change", async () => {
+  const { render, state, timers } = await topBar([agent("agent", "working")]);
+  assert.deepEqual(render(), { blocked: undefined, done: undefined, pulse: undefined });
+  state.agents = [agent("agent", "blocked", 2)];
+  const first = render();
+  assert.ok(first.pulse);
+  assert.equal(timers.length, 2);
+  assert.ok(timers[0].ms < timers[1].ms);
+  assert.equal(render().pulse.calls.id[0], first.pulse.calls.id[0]);
+  assert.equal(timers.length, 2);
+  timers[0].finish();
+  assert.equal(render().pulse.calls.opacity[0], 0);
+  timers[1].finish();
+  assert.equal(render().pulse, undefined);
+  assert.ok(render().blocked);
+
+  state.focus.terminal = "agent";
+  assert.equal(render().blocked, undefined);
+  state.focus.terminal = "shell";
+  assert.ok(render().blocked);
+  assert.equal(render().pulse, undefined);
+});
+
+test("a resolved alert and its timers cannot clear a more recent pulse", async () => {
+  const { render, state, timers } = await topBar([agent("a", "working"), agent("b", "working")]);
+  render();
+  state.agents[0] = agent("a", "done", 1);
+  const firstId = render().pulse.calls.id[0];
+  state.agents[0] = agent("a", "idle", 2);
+  state.agents[1] = agent("b", "done", 3);
+  const secondId = render().pulse.calls.id[0];
+  assert.notEqual(firstId, secondId);
+  timers[0].finish();
+  timers[1].finish();
+  assert.equal(render().pulse.calls.id[0], secondId);
+  assert.equal(render().pulse.calls.opacity[0], 1);
+
+  state.agents = [];
+  assert.deepEqual(render(), { blocked: undefined, done: undefined, pulse: undefined });
+  assert.doesNotThrow(() => timers.slice(2).forEach(({ finish }) => finish()));
+});
