@@ -29,12 +29,17 @@ In Context’s live **Since compact** view, a recorded Codex or Claude compactio
 | **+** in the tab bar | Start an agent. Type to filter the list. |
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
+| Context → Categories | Show the full category legend and filter by category |
+| Context → Select an event | Open its preview |
+| Context → Count details | See the model, window size, and how the counts were calculated |
 | Context → Expand | Open the larger inspector |
 | **History** in a focused terminal header | Return to live output. The header pulses when the terminal reaches the bottom. |
 
 The pane header flashes when a terminal gains focus or its selected agent starts working. The Context panel pulses when its captured counts update. Space renaming and agent filtering use the command palette's typing flash.
 
 In the Agent map, a pulse travels toward a worker when it first needs input. Its outline stays highlighted while it waits.
+
+Edge Alerts in the top bar pulse when a background agent needs input or finishes. The markers show how many agents are waiting or finished. Click a marker to open the most recently changed agent in that group.
 
 Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space.
 

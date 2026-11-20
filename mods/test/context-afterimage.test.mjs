@@ -63,7 +63,7 @@ test("the Context bar shows the comparison at its original height and keeps whol
     herdr: {
       appHome: noop, exec: noop, focused: noop, panes: noop, terminals: noop,
       layout: noop, props: noop, theme: () => theme, settings: noop, shared: noop,
-      openOverlay: noop, closeOverlay: noop,
+      openOverlay: noop, closeOverlay: noop, watchFolder: noop,
     },
   });
   const timers = [];

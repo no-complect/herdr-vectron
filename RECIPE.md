@@ -14,9 +14,10 @@ Vectron brings the glow and playful timing of classic stand-up vector arcades to
 ## How it behaves
 
 - Pick a space, agent, or tab with a click or its layout shortcut. Pane headers flash when the terminal gains focus and when the selected agent starts working. The three peaks fade in order and use slightly varied spacing.
+- Edge Alerts in the top bar count background agents that need input or have finished. The markers pulse on new activity. Click one to open the most recently changed agent in that group.
 - Working agents show a spinner. Blocked agents use an alert color, and finished agents get a status mark until viewed. The sidebar responds to selection. Command search, the picker, and the Context filter pulse when their input changes.
 - The Agents list, tabs, and pane headers use Vectron glyphs for Codex, Grok Build, Antigravity CLI, and Claude Code. Each glyph follows the three flashes of its row, tab, or header, changing hue at each peak. Other programs use their Herdr icons.
-- Context follows the focused supported local agent. The panel can expand, filter events, switch between Timeline and Largest or since-compaction and whole-history views, and show a selected event.
+- Context follows the focused supported local agent. The panel can expand, filter events, and switch between Timeline and Largest or since-compaction and whole-history views. Categories opens the full legend. Select an event to open its preview. Count details explains the reported and estimated counts.
 - On macOS, ⌘P opens the picker and ⌘⇧P opens the command palette. The layout also supplies Ctrl+Shift+K and Ctrl+Shift+P for the dialog variants. Whistle’s settings enable its optional keyboard navigation.
 
 ## Built from

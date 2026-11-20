@@ -203,6 +203,7 @@ function tasks() {
 }
 
 const contextHost = {
+  watchFolder: noop,
   appHome: () => "/fixture",
   props: () => ({}),
   layout: noop,
@@ -291,6 +292,47 @@ test("Context rejects late reads across agent and session switches and skips hid
   isVisible = false;
   view.refresh(timeline.context);
   assert.equal(requests.length, 7);
+});
+
+test("Context queues manual Refresh behind its own check and drops it when the agent changes", async () => {
+  const requests = [];
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: (_program, args) => new Promise((resolve) => {
+        requests.push({
+          request: JSON.parse(args[2]),
+          complete: (data) => resolve({ code: 0, stdout: JSON.stringify(data) }),
+        });
+      }),
+    },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  let address = "first";
+  view.target = () => ({ address, provider: "codex" });
+  view.visible = () => true;
+  view.init({}, context);
+  view.refresh(context, true);
+  view.refresh(context, false, true);
+  assert.equal(requests.length, 1);
+  requests[0].complete({ path: "/first", signature: "first-version" });
+  await new Promise(setImmediate);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].request.signature, null);
+  requests[1].complete({ path: "/first", signature: "fresh" });
+  await flush();
+  assert.equal(view.data.signature, "fresh");
+
+  view.refresh(context);
+  view.refresh(context, true);
+  address = "second";
+  view.refresh(context);
+  requests[2].complete({ path: "/first", signature: "late" });
+  requests[3].complete({ path: "/second" });
+  await flush();
+  assert.equal(requests.length, 4);
+  assert.equal(view.data.path, "/second");
 });
 
 test("Context keeps the selected transcript and replay when a known session restarts", async () => {
@@ -386,10 +428,186 @@ test("Context previews show byte offsets and legacy line numbers", async () => {
     [{}, ""],
   ]) {
     view.data = { events: [{ ...event, ...position }] };
-    const location = find(view.preview({}), (node) => node.calls.tooltip?.[0]?.startsWith(source));
+    const location = find(view.preview(), (node) => node.calls.tooltip?.[0]?.startsWith(source));
     assert.deepEqual(location.nodes, [`session.jsonl${suffix}`]);
     assert.equal(location.calls.tooltip[0], `${source}${suffix}`);
   }
+});
+
+test("Context gives the timeline the empty preview space and releases the editor when unpinned", async () => {
+  const requests = [];
+  let released = 0;
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: async (_program, args) => {
+        requests.push(JSON.parse(args[2]));
+        return { code: 0, stdout: JSON.stringify({ text: "Fixture detail" }) };
+      },
+    },
+    "gpui-base": { EditorState: { new: (options) => ({ options, release: () => released++ }) } },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.shownTarget = "";
+  view.controlsFlash = { layer: noop, start: noop };
+  const event = {
+    id: "0", category: "user", label: "Fixture event", tokens: 3, bytes: 12, segment: 0,
+    source: "/fixture/session.jsonl", offset: 0, teaser: "Fixture preview",
+  };
+  view.data = { path: event.source, events: [event] };
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const timeline = (tree) => find(tree, (node) => node.kind === "uniform_list" && node.args[0] === "context-events");
+
+  for (const width of [360, 1000]) {
+    view.width = width;
+    const initial = view.render(context);
+    assert.equal(view.preview(), null);
+    assert.equal(byId(initial, "context-preview"), undefined);
+
+    timeline(initial).calls.on_item_click[0](event.id, context);
+    await flush();
+    const shown = view.render(context);
+    const preview = byId(shown, "context-preview");
+    assert.ok(preview);
+    assert.equal(find(preview, (node) => node.kind === "editor").args[0].options.value, "Fixture detail");
+    byId(preview, "context-replay-event").calls.on_click[0](null, context);
+    assert.equal(view.replayCutoff, 0);
+    byId(preview, "context-unpin").calls.on_click[0](null, context);
+
+    const closed = view.render(context);
+    assert.ok(timeline(closed));
+    assert.equal(byId(closed, "context-preview"), undefined);
+    assert.ok(byId(closed, "context-live"));
+  }
+  assert.equal(released, 2);
+  assert.deepEqual(requests.map((request) => [request.action, request.offset]), [["detail", 0], ["detail", 0]]);
+});
+
+test("Context folds the legend to the largest categories and preserves filtering and bar access", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const { context } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.controlsFlash = { layer: noop, start: noop };
+  const counts = { runtime: 4, user: 10, results: 80, files: 70, instructions: 50 };
+  const totals = { counts, sum: 214 };
+  const byId = (tree, id) => find(tree, (node) => node.calls.id?.[0] === id);
+  const legend = (tree) => Object.keys(counts).filter((category) => byId(tree, `category-${category}`));
+  const click = (tree, id) => byId(tree, id).calls.on_click[0](null, context);
+
+  for (const width of [360, 1000]) {
+    view.width = width;
+    const compact = view.breakdown(totals);
+    assert.deepEqual(legend(compact), ["results", "files", "instructions"]);
+    assert.ok(Object.keys(counts).every((id) => byId(compact, `bar-${id}`)));
+
+    click(compact, "context-categories");
+    const expanded = view.breakdown(totals);
+    assert.deepEqual(legend(expanded), Object.keys(counts));
+    click(expanded, "category-runtime");
+    click(expanded, "context-categories");
+    const filtered = view.breakdown(totals);
+    assert.equal(view.selectedCategory, "runtime");
+    assert.deepEqual(legend(filtered), ["runtime", "results", "files", "instructions"]);
+    click(filtered, "context-reset-filter");
+    assert.deepEqual(legend(view.breakdown(totals)), ["results", "files", "instructions"]);
+
+    click(view.breakdown(totals), "bar-user");
+    assert.equal(view.selectedCategory, "user");
+    assert.ok(byId(view.breakdown(totals), "category-user"));
+    click(view.breakdown(totals), "category-user");
+    assert.equal(view.selectedCategory, null);
+  }
+  assert.equal(byId(view.breakdown({ counts: { files: 70, user: 10 }, sum: 80 }), "context-categories"), undefined);
+});
+
+test("a preview closed and reopened on the same event ignores the first request's late response", async () => {
+  const reads = [];
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: () => new Promise((resolve) => reads.push((text) => resolve({ code: 0, stdout: JSON.stringify({ text }) }))),
+    },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.controlsFlash = { layer: noop, start: noop };
+  const event = { id: "1", source: "/fixture/session.jsonl", category: "user", tokens: 3, bytes: 10 };
+  view.data = { path: event.source, events: [event] };
+
+  view.inspect(event, context);
+  const unpin = find(view.preview(), (node) => node.calls.id?.[0] === "context-unpin");
+  unpin.calls.on_click[0](null, context);
+  view.inspect(event, context);
+  assert.equal(reads.length, 2);
+
+  reads[1]("fresh preview");
+  await new Promise(setImmediate);
+  assert.equal(view.details, "fresh preview");
+  reads[0]("late preview");
+  await flush();
+  assert.equal(view.details, "fresh preview");
+});
+
+test("Context keeps the two counts and percentage visible while Count details holds routine metadata", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const { context } = tasks();
+  const view = new Inspector();
+  view.target = () => null;
+  view.init({}, context);
+  view.shownTarget = "";
+  view.controlsFlash = { layer: noop, start: noop };
+  view.data = {
+    path: "/fixture/session.jsonl", model: "fixture-model", reported: { input: 95200, window: 475000 },
+    events: [{ id: "0", category: "user", tokens: 78400, segment: 0 }], files: 1,
+  };
+  const hasText = (tree, text) => Boolean(find(tree, (node) => node.nodes.includes(text)));
+  const routine = "Reported by the last model request; an in-flight turn may be ahead.";
+  const summary = view.render(context);
+  for (const text of ["LAST REPORTED INPUT", "95.2K", "20.0%", "CAPTURED TEXT · ESTIMATED", "~78.4K tokens"]) {
+    assert.ok(hasText(summary, text), text);
+  }
+  assert.equal(hasText(summary, "fixture-model"), false);
+  assert.equal(hasText(summary, routine), false);
+
+  const reveal = find(summary, (node) => node.calls.id?.[0] === "context-about");
+  assert.ok(reveal.nodes.includes("Count details"));
+  reveal.calls.on_click[0](null, context);
+  const details = find(view.render(context), (node) => node.calls.id?.[0] === "context-notes");
+  assert.ok(hasText(details, "Model · fixture-model"));
+  assert.ok(hasText(details, `Context window · ${(475000).toLocaleString()} tokens`));
+  assert.ok(hasText(details, routine));
+});
+
+test("Context leaves missing usage, unknown window, and partial transcript warnings in the collapsed view", async () => {
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", { herdr: contextHost });
+  const view = new Inspector();
+  view.dataFlash = { layer: noop };
+  view.replayCutoff = null;
+  view.data = { partial_history: true, events: [] };
+  const hasText = (tree, text) => Boolean(find(tree, (node) => node.nodes.includes(text)));
+
+  assert.ok(hasText(view.gauge({ input: 95000, window: 475000 }), "Showing a partial transcript."));
+  assert.ok(hasText(view.gauge(null), "No usage sample was found within the read limit."));
+  assert.ok(hasText(view.gauge({ input: 200, window: 1000, before_retained_history: true }),
+    "Last recorded usage predates the retained history."));
+
+  view.data = { events: [{ id: "1" }], recorded_events: 6000 };
+  const grok = view.gauge({ input: 105900, kind: "context", label: "CONTEXT ESTIMATE" });
+  assert.ok(hasText(grok, "CONTEXT ESTIMATE"));
+  assert.ok(hasText(grok, "Window size not recorded"));
+  assert.ok(hasText(grok, "Showing a partial transcript."));
+  const olderGrok = view.gauge({ input: 105900, kind: "context", before_retained_history: true });
+  assert.ok(hasText(olderGrok, "Window size not recorded"));
+  assert.ok(hasText(olderGrok, "Last recorded usage predates the retained history."));
+  view.replayCutoff = 0;
+  assert.ok(hasText(view.gauge(null), "No usage sample is available at this replay point."));
 });
 
 test("Context meters retain their native pulse rates and flash only changed categories", async () => {

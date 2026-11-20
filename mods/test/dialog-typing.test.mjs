@@ -162,12 +162,26 @@ test("agent launcher keeps unfiltered number shortcuts and never starts an unins
   assert.equal(unfiltered.calls[2][1].argv[0], "claude");
 });
 
-test("the Vectron rename shortcut and Whistle route into the flashing prompt", async () => {
+test("the flashing rename prompt is scoped to Vectron", async () => {
   const root = new URL("../../", import.meta.url);
   const json = async (name) => JSON.parse(await readFile(new URL(name, root), "utf8"));
-  const [keys, whistle] = await Promise.all([json("keys.json"), json("mods/whistle/mappings.json")]);
+  const [keys, defaults, layout, { compose }] = await Promise.all([
+    json("keys.json"),
+    json("mods/whistle/mappings.json"),
+    json("layouts/vectron.json"),
+    loadMod("whistle", "config.js", {
+      herdr: { appHome: noop, readTextFile: noop, writeTextFile: noop },
+    }),
+  ]);
+  const layoutProps = layout.children.find(({ id }) => id === "statusbar").content.props;
+
+  const shared = compose(defaults, null, {}, null);
+  const vectron = compose(defaults, layoutProps.mappings, layoutProps, null);
+
   assert.equal(keys["layout:vectron"]["shift-f2"], "mod.open:vectron-dialogs");
-  assert.deepEqual(whistle.map.S.map.r, ["Rename space", "mod.open:vectron-dialogs"]);
+  assert.deepEqual(shared.map.S.map.r, ["Rename space", "space.rename"]);
+  assert.deepEqual(vectron.map.S.map.r, ["Rename space", "mod.open:vectron-dialogs"]);
+  assert.deepEqual(vectron.map.S.map.n, shared.map.S.map.n);
 });
 
 test("both palettes, the Spaces menu, and the tab plus button use Vectron's dialogs", async () => {

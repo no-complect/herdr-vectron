@@ -2,8 +2,6 @@ import { InputGlow } from "./input-glow.js";
 import { View, div, svg, uniform_list } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, Editor, EditorState, Scrollbar } from "gpui-base";
 import {
-  appHome,
-  exec,
   focused,
   panes,
   terminals,
@@ -20,6 +18,8 @@ import { Flash, flashColor } from "./beam.js";
 import { CompactionAfterimage, afterimageLayer, compactionComparison } from "./afterimage.js";
 import { layoutVisibility } from "./visibility.js";
 import { focusedSession, providerNames } from "./target.js";
+import { joinRead, readSession, recentSession } from "./session-loads.js";
+import { TranscriptWatch } from "./transcript-watch.js";
 
 const MOD = "vectron-context";
 // Copies share this module, so keyboard-opened dialogs can inherit the panel's
@@ -32,23 +32,10 @@ function sessionKey(target) {
   return JSON.stringify([address, provider, sessionId || null, sessionId ? null : pid]);
 }
 
-async function readSession(request, timeout = 15000) {
-  const result = await exec(
-    "python3",
-    [`${appHome()}/mods/${MOD}/inspect_session.py`, "--request", JSON.stringify(request)],
-    { timeout },
-  );
-  if (result.code !== 0) {
-    throw new Error("The local session reader could not start. Python 3 is required.");
-  }
-  const data = JSON.parse(result.stdout);
-  if (data.error) throw new Error(data.error);
-  return data;
-}
-
 export default class ContextInspector extends View {
   contextEvents = new ContextEvents();
   afterimage = new CompactionAfterimage();
+  transcriptWatch = new TranscriptWatch();
 
   init(_props, cx) {
     this.inputGlow = new InputGlow();
@@ -63,12 +50,13 @@ export default class ContextInspector extends View {
     this.pendingRead = null;
     this.error = null;
     this.selectedCategory = null;
+    this.showCategories = false;
     this.timelineOrder = "timeline";
     this.showWholeHistory = false;
     this.replayCutoff = null;
     this.pinned = null;
     this.details = null;
-    this.detailKey = null;
+    this.detailRead = null;
     this.manual = new Map();
     const selectedPath =
       options.selectedPath ??
@@ -89,12 +77,15 @@ export default class ContextInspector extends View {
       this.searchQuery = this.search.value().toLowerCase();
       cx.notify();
     });
+    // A process can move to a transcript outside the watched folder without a focus change.
     cx.timer.every(5000, (cx) => this.refresh(cx));
     this.refresh(cx);
   }
 
   close() {
     this.closed = true;
+    this.releaseRead();
+    this.transcriptWatch.stop();
     this.afterimage.clear();
     this.code?.release();
     if (panelInstance === this) panelInstance = null;
@@ -133,7 +124,7 @@ export default class ContextInspector extends View {
     if (!this.manual.has(key)) this.manual.set(key, selectedPath);
     if (this.identity === previousIdentity && this.manual.get(key) === selectedPath) {
       this.identity = this.targetIdentity(target);
-      this.pendingRead = null;
+      this.releaseRead();
     }
     return target;
   }
@@ -169,31 +160,53 @@ export default class ContextInspector extends View {
     this.code?.release();
     this.code = null;
     this.details = null;
-    this.detailKey = null;
+    this.detailRead = null;
     this.pinned = null;
   }
 
-  resetSession(identity) {
+  releaseRead() {
+    this.pendingRead?.join?.leave();
+    this.pendingRead = null;
+    this.refreshQueued = null;
+  }
+
+  resetSession(identity, cached) {
+    this.releaseRead();
+    this.transcriptWatch.stop();
     this.identity = identity;
     this.dataFlash.burst = null;
     this.afterimage.clear();
     this.contextEvents = new ContextEvents();
-    this.data = null;
+    this.data = cached ?? null;
     this.error = null;
-    this.pendingRead = null;
     this.replayCutoff = null;
     this.clearDetail();
   }
 
-  refresh(cx, force = false) {
+  refresh(cx, force = false, fromWatch = false) {
     if (this.closed) return;
-    if (!force && !this.visible()) return;
+    if (!this.visible()) {
+      this.transcriptWatch.stop();
+      this.shownTarget = null;
+      if (!force) return;
+    }
 
     const target = this.selectedTarget();
     const identity = this.targetIdentity(target);
-    if (identity !== this.identity) this.resetSession(identity);
+    const path = this.manual.get(sessionKey(target));
+    if (identity !== this.identity) {
+      const cached = recentSession(identity);
+      // A process can switch transcripts without changing its PID or title.
+      const verified = path || (target?.session_id && cached?.match === "Session identifier");
+      this.resetSession(identity, verified ? cached : null);
+    }
 
-    if (this.pendingRead || !target) return;
+    if (this.pendingRead) {
+      if (force) this.refreshQueued = "manual";
+      else if (fromWatch && !this.refreshQueued) this.refreshQueued = "watch";
+      return;
+    }
+    if (!target) return;
     if (target.address.includes("/")) {
       this.error = "Context currently reads local sessions only.";
       return;
@@ -204,20 +217,18 @@ export default class ContextInspector extends View {
       return;
     }
 
-    const request = {
-      ...target,
-      path: this.manual.get(sessionKey(target)),
-      signature: force ? null : this.data?.signature,
-    };
-    // Two visits to the same session can have different reads in flight.
-    this.pendingRead = request;
+    const visit = { showProgress: force || !this.data };
+    this.pendingRead = visit;
     const isCurrentRead = () =>
       !this.closed &&
-      this.pendingRead === request &&
+      this.pendingRead === visit &&
       this.targetIdentity(this.target()) === identity;
     cx.spawn(async (cx) => {
+      if (this.pendingRead !== visit || this.closed) return;
+      let redraw = visit.showProgress;
       try {
-        const response = await readSession(request);
+        visit.join = joinRead(identity, { ...target, path }, this.data, force);
+        const response = await visit.join.promise;
         if (!isCurrentRead()) return;
 
         const previous = this.data;
@@ -228,20 +239,34 @@ export default class ContextInspector extends View {
           this.afterimage.clear();
           this.clearDetail();
         }
-        this.data = response.unchanged ? { ...previous, ...response } : response;
+        redraw ||= (
+          !response.unchanged || !previous || previous.events !== response.events ||
+          Boolean(this.error) || JSON.stringify(previous.candidates) !== JSON.stringify(response.candidates) ||
+          previous.match !== response.match || previous.reason !== response.reason
+        );
+        this.data = response;
         this.error = null;
+        if (this.visible()) {
+          this.transcriptWatch.observe(
+            response.path, target.provider, (cx) => this.refresh(cx, false, true), cx,
+          );
+        }
 
         if (!response.unchanged && this.replayCutoff === null && sameSession && this.visible()) {
           this.flashUpdatedCounts(cx, previous, this.data);
         }
       } catch (error) {
         if (isCurrentRead()) {
-          this.error = String(error.message || error);
+          const message = String(error.message || error);
+          redraw ||= this.error !== message;
+          this.error = message;
         }
       } finally {
-        if (this.pendingRead === request) {
-          this.pendingRead = null;
-          if (!this.closed) cx.notify();
+        if (this.pendingRead === visit) {
+          const queued = this.refreshQueued && isCurrentRead() ? this.refreshQueued : null;
+          this.releaseRead();
+          if (!this.closed && redraw) cx.notify();
+          if (queued) this.refresh(cx, queued === "manual");
         }
       }
     });
@@ -251,14 +276,16 @@ export default class ContextInspector extends View {
     const changed = this.pinned !== event.id;
     this.pinned = event.id;
     const key = `${this.data?.path}:${event.id}`;
-    if (key === this.detailKey) {
+    if (key === this.detailRead?.key) {
       if (changed) cx.notify();
       return;
     }
-    this.detailKey = key;
+    const read = { key };
+    this.detailRead = read;
     this.code?.release();
     this.code = null;
     this.details = null;
+    const isCurrent = () => !this.closed && this.detailRead === read;
     cx.spawn(async (cx) => {
       try {
         const detail = await readSession(
@@ -272,7 +299,7 @@ export default class ContextInspector extends View {
           },
           10000,
         );
-        if (this.closed || this.detailKey !== key) return;
+        if (!isCurrent()) return;
         this.details = detail.text || detail.error || "This event has no text preview.";
         if (detail.truncated) this.details += "\n\n[Preview limited to 24,000 characters]";
         this.code = EditorState.new({
@@ -283,9 +310,9 @@ export default class ContextInspector extends View {
           font_size: 12,
         });
       } catch {
-        if (this.detailKey === key) this.details = "The source could not be previewed.";
+        if (isCurrent()) this.details = "The source could not be previewed.";
       } finally {
-        cx.notify();
+        if (isCurrent()) cx.notify();
       }
     });
     cx.notify();
@@ -370,19 +397,21 @@ export default class ContextInspector extends View {
 
   gauge(usage) {
     const t = theme();
-    let note = "No model usage sample is recorded yet.";
-    if (usage?.before_retained_history) {
-      note = "Last recorded usage predates the retained history.";
-    } else if (usage?.kind === "context") {
-      note = "Grok's recorded context estimate; an in-flight turn may be ahead.";
-    } else if (usage) {
-      note = "Reported by the last model request; an in-flight turn may be ahead.";
-    } else if (this.replayCutoff != null) {
-      note = "No usage sample is available at this replay point.";
-    } else if (this.data?.partial_history) {
-      note = "No usage sample was found within the read limit.";
-    }
     const percent = usage?.window ? (usage.input / usage.window) * 100 : null;
+    const partial =
+      this.data?.partial_history || this.data?.recorded_events > (this.data?.events?.length ?? 0);
+    let warning = null;
+    if (!usage) {
+      warning = "No model usage sample is recorded yet.";
+      if (this.replayCutoff != null) {
+        warning = "No usage sample is available at this replay point.";
+      } else if (this.data?.partial_history) {
+        warning = "No usage sample was found within the read limit.";
+      }
+    } else if (usage.before_retained_history) {
+      warning = "Last recorded usage predates the retained history.";
+    }
+
     const barColor = this.usageBarColor(usage);
     const color = percent !== null && percent >= 75 ? barColor : t.accent;
     return v_flex()
@@ -402,45 +431,30 @@ export default class ContextInspector extends View {
               ),
           )
           .child(
-            div()
-              .text_size(22)
-              .font_semibold()
-              .text_color(color)
-              .child(usage ? formatCount(usage.input) : "—"),
-          ),
-      )
-      .child(
-        h_flex()
-          .justify_between()
-          .gap(8)
-          .text_size(11)
-          .text_color(t.dim)
-          .child(
-            div()
-              .flex_1()
-              .min_w(0)
-              .truncate()
-              .tooltip(this.data?.model || "")
-              .child(this.data?.model || "Model not recorded"),
-          )
-          .child(
-            div()
+            h_flex()
               .flex_none()
+              .items_end()
+              .gap(7)
               .child(
-                usage?.window
-                  ? `${formatCount(usage.window)} window · ${percent.toFixed(1)}%`
-                  : "Window size not recorded",
+                div()
+                  .text_size(22)
+                  .font_semibold()
+                  .text_color(color)
+                  .child(usage ? formatCount(usage.input) : "—"),
+              )
+              .when(percent !== null, (el) =>
+                el.child(div().text_size(11).text_color(t.muted).child(`${percent.toFixed(1)}%`)),
               ),
           ),
       )
-      .child(
-        div()
-          .h(5)
-          .w_full()
-          .rounded(2)
-          .bg(t.border)
-          .when(percent !== null, (el) =>
-            el.child(
+      .when(percent !== null, (el) =>
+        el.child(
+          div()
+            .h(5)
+            .w_full()
+            .rounded(2)
+            .bg(t.border)
+            .child(
               div()
                 .h_full()
                 .rounded(2)
@@ -450,14 +464,46 @@ export default class ContextInspector extends View {
                 .child(this.breathingFill("reported", barColor, 477))
                 .child(this.dataFlash.layer("reported", "fill")),
             ),
-          ),
+        ),
       )
-      .child(
-        div()
-          .text_size(10)
-          .text_color(t.dim)
-          .child(note),
+      .when(Boolean(usage) && percent === null, (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child("Window size not recorded")),
+      )
+      .when(Boolean(warning), (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child(warning)),
+      )
+      .when(Boolean(partial), (el) =>
+        el.child(div().text_size(10).text_color(t.muted).child("Showing a partial transcript.")),
       );
+  }
+
+  countDetails(usage) {
+    const t = theme();
+    const model = this.data.model ? `Model · ${this.data.model}` : "Model not recorded";
+    const windowSize =
+      usage?.window
+        ? `Context window · ${usage.window.toLocaleString()} tokens`
+        : "Window size not recorded";
+    const explanation =
+      usage?.kind === "context"
+        ? "Grok's recorded context estimate; an in-flight turn may be ahead."
+        : "Reported by the last model request; an in-flight turn may be ahead.";
+    const details = [
+      model,
+      windowSize,
+      usage && explanation,
+      this.data.method,
+      "The category bar describes recorded text, not an exact live prompt. Compaction and unrecorded runtime data can make the reported total different.",
+      `Matched: ${this.data.match}. ${this.data.files} history file(s).`,
+      ...(this.data.notes || []),
+    ].filter(Boolean);
+
+    return v_flex()
+      .id("context-notes")
+      .max_h(145)
+      .overflow_y_scrollbar()
+      .gap(5)
+      .children(details.map((note) => div().text_size(10).text_color(t.dim).child(note)));
   }
 
   breakdown({ counts, sum }) {
@@ -465,31 +511,56 @@ export default class ContextInspector extends View {
     const image =
       this.replayCutoff === null && !this.showWholeHistory ? this.afterimage.current : null;
     const active = categories.filter((c) => counts[c.id]);
+    const listed =
+      this.showCategories || active.length <= 3
+        ? [...active]
+        : [...active].sort((a, b) => counts[b.id] - counts[a.id]).slice(0, 3);
+    const selected = categories.find((category) => category.id === this.selectedCategory);
+    if (selected && !listed.includes(selected)) listed.push(selected);
+
     const chip = (c) =>
       this.button(
         `category-${c.id}`,
-        `${c.label}  ~${formatCount(counts[c.id])}`,
+        `${c.label}  ~${formatCount(counts[c.id] ?? 0)}`,
         () => {
           this.selectedCategory = this.selectedCategory === c.id ? null : c.id;
         },
         this.selectedCategory === c.id,
       );
+    const chips = listed.map(chip);
+    if (active.length > 3) {
+      chips.push(
+        this.button(
+          "context-categories",
+          this.showCategories ? "Fewer categories" : "Categories",
+          () => {
+            this.showCategories = !this.showCategories;
+          },
+        ),
+      );
+    }
+    if (selected) {
+      chips.push(this.button("context-reset-filter", "Clear filter", () => {
+        this.selectedCategory = null;
+      }));
+    }
+
     const legend =
       this.width < 400
         ? v_flex()
             .gap(2)
             .children(
-              Array.from({ length: Math.ceil(active.length / 2) }, (_, i) =>
+              Array.from({ length: Math.ceil(chips.length / 2) }, (_, i) =>
                 h_flex()
                   .gap(3)
                   .children(
-                    active
+                    chips
                       .slice(i * 2, i * 2 + 2)
-                      .map((c) => chip(c).flex_1().min_w(0).px(3).py(3).text_size(9).truncate()),
+                      .map((el) => el.flex_1().min_w(0).px(3).py(3).text_size(9).truncate()),
                   ),
               ),
             )
-        : h_flex().gap(5).flex_wrap().children(active.map(chip));
+        : h_flex().gap(5).flex_wrap().children(chips);
     return v_flex()
       .gap(8)
       .child(
@@ -545,14 +616,7 @@ export default class ContextInspector extends View {
           )
           .when(Boolean(image), (el) => el.child(afterimageLayer(image, this.categoryBarWidth, t))),
       )
-      .child(legend)
-      .when(Boolean(this.selectedCategory), (el) =>
-        el.child(
-          this.button("context-reset-filter", "Show all categories", () => {
-            this.selectedCategory = null;
-          }),
-        ),
-      );
+      .when(chips.length > 0, (el) => el.child(legend));
   }
 
   pickerView(cx) {
@@ -738,17 +802,18 @@ export default class ContextInspector extends View {
       );
   }
 
-  preview(cx) {
-    const t = theme();
-    const event = this.pinned === null
-      ? undefined
-      : this.data?.events?.find((event) => event.id === this.pinned);
+  preview() {
+    if (this.pinned === null) return null;
+    const event = this.data?.events?.find((event) => event.id === this.pinned);
+    if (!event) return null;
 
+    const t = theme();
     let sourcePosition = "";
-    if (event?.offset != null) sourcePosition = ` · byte ${event.offset}`;
-    else if (event?.line != null) sourcePosition = `:${event.line}`;
+    if (event.offset != null) sourcePosition = ` · byte ${event.offset}`;
+    else if (event.line != null) sourcePosition = `:${event.line}`;
 
     return v_flex()
+      .id("context-preview")
       .flex_1()
       .min_w(0)
       .min_h(140)
@@ -757,71 +822,48 @@ export default class ContextInspector extends View {
       .rounded(4)
       .p(10)
       .gap(8)
-      .when(!event, (el) =>
-        el.child(
-          div()
-            .p(10)
-            .text_size(12)
-            .text_color(t.muted)
-            .child(
-              "Click an event to inspect its preview. Choose Largest to find the biggest recorded contributions.",
-            ),
-        ),
-      )
-      .when(Boolean(event), (el) =>
-        el
-          .child(
-            h_flex()
-              .gap(8)
-              .items_center()
-              .child(
-                div()
-                  .flex_1()
-                  .min_w(0)
-                  .truncate()
-                  .text_size(12)
-                  .font_semibold()
-                  .text_color(t.foreground)
-                  .child(event.label),
-              )
-              .when(Boolean(this.pinned), (e) =>
-                e.child(
-                  this.button("context-unpin", "Unpin", () => {
-                    this.pinned = null;
-                  }),
-                ),
-              ),
-          )
+      .child(
+        h_flex()
+          .gap(8)
+          .items_center()
           .child(
             div()
-              .text_size(11)
-              .text_color(categoryOf(event.category).color)
-              .child(
-                `${categoryOf(event.category).label} · ~${formatCount(event.tokens)} tokens · ${formatCount(event.bytes)} bytes`,
-              ),
-          )
-          .child(
-            div()
-              .text_size(10)
-              .text_color(t.dim)
+              .flex_1()
+              .min_w(0)
               .truncate()
-              .tooltip(`${event.source}${sourcePosition}`)
-              .child(`${event.source.split("/").pop()}${sourcePosition}`),
+              .text_size(12)
+              .font_semibold()
+              .text_color(t.foreground)
+              .child(event.label),
           )
+          .child(this.button("context-unpin", "Unpin", () => this.clearDetail())),
+      )
+      .child(
+        div()
+          .text_size(11)
+          .text_color(categoryOf(event.category).color)
           .child(
-            this.button("context-replay-event", "Replay through this event", () => {
-              this.afterimage.clear();
-              this.replayCutoff = Number(event.id);
-            }),
-          )
-          .child(
-            this.code
-              ? Editor.new(this.code).flex_1().min_h(0)
-              : div()
-                  .text_size(12)
-                  .text_color(t.muted)
-                  .child(this.details || "Loading preview…"),
+            `${categoryOf(event.category).label} · ~${formatCount(event.tokens)} tokens · ${formatCount(event.bytes)} bytes`,
           ),
+      )
+      .child(
+        div()
+          .text_size(10)
+          .text_color(t.dim)
+          .truncate()
+          .tooltip(`${event.source}${sourcePosition}`)
+          .child(`${event.source.split("/").pop()}${sourcePosition}`),
+      )
+      .child(
+        this.button("context-replay-event", "Replay through this event", () => {
+          this.afterimage.clear();
+          this.replayCutoff = Number(event.id);
+        }),
+      )
+      .child(
+        this.code
+          ? Editor.new(this.code).flex_1().min_h(0)
+          : div().text_size(12).text_color(t.muted).child(this.details || "Loading preview…"),
       );
   }
 
@@ -830,12 +872,15 @@ export default class ContextInspector extends View {
       target = this.target();
     const next = this.targetIdentity(target);
     const visible = this.visible();
-    if (!visible) this.afterimage.clear();
-    if (next !== this.identity && visible) this.refresh(cx);
+    if (!visible) {
+      this.afterimage.clear();
+      this.transcriptWatch.stop();
+    }
     const shownTarget = visible ? (target?.address ?? "") : null;
     // A hidden stack child might not render until it is selected again.
     const opened = props()?.overlay ? null : shared("vectron.context-open");
     const justOpened = opened && opened.at !== this.lastPanelOpen && Date.now() - opened.at < 750;
+    if (visible && (next !== this.identity || justOpened || this.shownTarget === null)) this.refresh(cx);
     if (shownTarget !== null && (shownTarget !== this.shownTarget || justOpened)) {
       this.lastPanelFlashColor = justOpened
         ? opened.color
@@ -858,6 +903,7 @@ export default class ContextInspector extends View {
       this.timelineOrder,
     );
     const usage = reportedUsageAt(this.data, this.replayCutoff);
+    const preview = this.preview();
     const wide = this.width > 720;
     const body = (wide ? h_flex().gap(12) : v_flex().gap(10)).items_stretch();
     return v_flex()
@@ -894,7 +940,7 @@ export default class ContextInspector extends View {
           )
           .child(div().flex_1())
           .child(
-            this.button("context-refresh", this.pendingRead ? "Reading…" : "Refresh", (cx) =>
+            this.button("context-refresh", this.pendingRead?.showProgress ? "Reading…" : "Refresh", (cx) =>
               this.refresh(cx, true),
             ),
           )
@@ -997,7 +1043,7 @@ export default class ContextInspector extends View {
               .min_h(0)
               .overflow_hidden()
               .child(this.timelineView(entries).when(wide, (e) => e.h_full()))
-              .child(this.preview(cx).when(wide, (e) => e.h_full())),
+              .when(Boolean(preview), (el) => el.child(preview.when(wide, (e) => e.h_full()))),
           )
           .child(
             h_flex()
@@ -1006,32 +1052,16 @@ export default class ContextInspector extends View {
               .child(
                 this.button(
                   "context-about",
-                  this.about ? "Hide count details" : "About these counts",
+                  this.about ? "Hide count details" : "Count details",
                   () => {
                     this.about = !this.about;
                   },
                 ),
               )
               .child(div().flex_1())
-              .child(div().text_size(9).text_color(t.dim).child("Local · read-only · 5s")),
+              .child(div().text_size(9).text_color(t.dim).child("Local · read-only")),
           )
-          .when(this.about, (e) =>
-            e.child(
-              v_flex()
-                .id("context-notes")
-                .max_h(145)
-                .overflow_y_scrollbar()
-                .gap(5)
-                .children(
-                  [
-                    this.data.method,
-                    "The category bar describes recorded text, not an exact live prompt. Compaction and unrecorded runtime data can make the reported total different.",
-                    `Matched: ${this.data.match}. ${this.data.files} history file(s).`,
-                    ...(this.data.notes || []),
-                  ].map((note) => div().text_size(10).text_color(t.dim).child(note)),
-                ),
-            ),
-          ),
+          .when(this.about, (el) => el.child(this.countDetails(usage))),
       );
   }
 }

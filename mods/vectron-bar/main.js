@@ -15,6 +15,7 @@ import {
 } from "herdr";
 import { setZoomBorder, ZOOM_BORDER } from "./zoom.js";
 import { lookFor, openMod } from "./opens.js";
+import { EdgeAlerts } from "./edge-alerts.js";
 
 const own = (el) => el.on_mouse_down("left", (_e, cx) => cx.stop_propagation());
 
@@ -40,11 +41,13 @@ function toggleSidebar() {
 }
 
 export default class VectronBar extends View {
+  edgeAlerts = new EdgeAlerts();
+
   init(_props, cx) {
     lookFor(["vectron-dialog-palette", "vectron-dialog-picker"], cx);
   }
 
-  render() {
+  render(cx) {
     const t = theme();
     const part = props()?.part;
     const row = h_flex()
@@ -56,10 +59,10 @@ export default class VectronBar extends View {
       .text_color(t.muted)
       .overflow_hidden();
     if (part === "right") return this.right(row, t);
-    return this.left(row, t);
+    return this.left(row, t, cx);
   }
 
-  left(row, t) {
+  left(row, t, cx) {
     const list = spaces();
     const zoomed = Boolean(list.find((s) => s.active)?.tabs.find((tab) => tab.active)?.zoomed);
     if (zoomed !== this.zoomed) {
@@ -72,13 +75,16 @@ export default class VectronBar extends View {
         setZoomBorder(zoomed);
       this.zoomed = zoomed;
     }
+    const liveAgents = agents();
+    const focus = focused();
+    const alerts = this.edgeAlerts.render(liveAgents, focus, t, cx);
     const blocked = new Set(
-      agents()
+      liveAgents
         .filter((a) => a.status === "blocked")
         .map((a) => a.space),
     );
     const space = list.find((s) => s.active);
-    const cwd = focused()?.cwd;
+    const cwd = focus?.cwd;
     const here = cwd ? (cwd === home() ? "~" : cwd.split("/").filter(Boolean).pop()) : null;
     const sep = () => div().flex_none().mx(10).text_color(t.border).child("│");
     // macOS draws its window buttons over this corner; leave them room.
@@ -181,6 +187,7 @@ export default class VectronBar extends View {
             .child(svg("mods/vectron-icons/search.svg").size(14)),
         ),
       )
+      .children(alerts)
       .when(Boolean(space), (el) =>
         el
           .child(sep())
