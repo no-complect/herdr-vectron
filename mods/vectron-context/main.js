@@ -2,8 +2,6 @@ import { InputGlow } from "./input-glow.js";
 import { View, div, svg, uniform_list } from "gpui-kit";
 import { h_flex, v_flex, Input, InputState, Editor, EditorState, Scrollbar } from "gpui-base";
 import {
-  appHome,
-  exec,
   focused,
   panes,
   terminals,
@@ -20,6 +18,8 @@ import { Flash, flashColor } from "./beam.js";
 import { CompactionAfterimage, afterimageLayer, compactionComparison } from "./afterimage.js";
 import { layoutVisibility } from "./visibility.js";
 import { focusedSession, providerNames } from "./target.js";
+import { joinRead, readSession, recentSession } from "./session-loads.js";
+import { TranscriptWatch } from "./transcript-watch.js";
 
 const MOD = "vectron-context";
 // Copies share this module, so keyboard-opened dialogs can inherit the panel's
@@ -32,23 +32,10 @@ function sessionKey(target) {
   return JSON.stringify([address, provider, sessionId || null, sessionId ? null : pid]);
 }
 
-async function readSession(request, timeout = 15000) {
-  const result = await exec(
-    "python3",
-    [`${appHome()}/mods/${MOD}/inspect_session.py`, "--request", JSON.stringify(request)],
-    { timeout },
-  );
-  if (result.code !== 0) {
-    throw new Error("The local session reader could not start. Python 3 is required.");
-  }
-  const data = JSON.parse(result.stdout);
-  if (data.error) throw new Error(data.error);
-  return data;
-}
-
 export default class ContextInspector extends View {
   contextEvents = new ContextEvents();
   afterimage = new CompactionAfterimage();
+  transcriptWatch = new TranscriptWatch();
 
   init(_props, cx) {
     this.inputGlow = new InputGlow();
@@ -89,12 +76,15 @@ export default class ContextInspector extends View {
       this.searchQuery = this.search.value().toLowerCase();
       cx.notify();
     });
+    // A process can move to a transcript outside the watched folder without a focus change.
     cx.timer.every(5000, (cx) => this.refresh(cx));
     this.refresh(cx);
   }
 
   close() {
     this.closed = true;
+    this.releaseRead();
+    this.transcriptWatch.stop();
     this.afterimage.clear();
     this.code?.release();
     if (panelInstance === this) panelInstance = null;
@@ -133,7 +123,7 @@ export default class ContextInspector extends View {
     if (!this.manual.has(key)) this.manual.set(key, selectedPath);
     if (this.identity === previousIdentity && this.manual.get(key) === selectedPath) {
       this.identity = this.targetIdentity(target);
-      this.pendingRead = null;
+      this.releaseRead();
     }
     return target;
   }
@@ -173,27 +163,49 @@ export default class ContextInspector extends View {
     this.pinned = null;
   }
 
-  resetSession(identity) {
+  releaseRead() {
+    this.pendingRead?.join?.leave();
+    this.pendingRead = null;
+    this.refreshQueued = null;
+  }
+
+  resetSession(identity, cached) {
+    this.releaseRead();
+    this.transcriptWatch.stop();
     this.identity = identity;
     this.dataFlash.burst = null;
     this.afterimage.clear();
     this.contextEvents = new ContextEvents();
-    this.data = null;
+    this.data = cached ?? null;
     this.error = null;
-    this.pendingRead = null;
     this.replayCutoff = null;
     this.clearDetail();
   }
 
-  refresh(cx, force = false) {
+  refresh(cx, force = false, fromWatch = false) {
     if (this.closed) return;
-    if (!force && !this.visible()) return;
+    if (!this.visible()) {
+      this.transcriptWatch.stop();
+      this.shownTarget = null;
+      if (!force) return;
+    }
 
     const target = this.selectedTarget();
     const identity = this.targetIdentity(target);
-    if (identity !== this.identity) this.resetSession(identity);
+    const path = this.manual.get(sessionKey(target));
+    if (identity !== this.identity) {
+      const cached = recentSession(identity);
+      // A process can switch transcripts without changing its PID or title.
+      const verified = path || (target?.session_id && cached?.match === "Session identifier");
+      this.resetSession(identity, verified ? cached : null);
+    }
 
-    if (this.pendingRead || !target) return;
+    if (this.pendingRead) {
+      if (force) this.refreshQueued = "manual";
+      else if (fromWatch && !this.refreshQueued) this.refreshQueued = "watch";
+      return;
+    }
+    if (!target) return;
     if (target.address.includes("/")) {
       this.error = "Context currently reads local sessions only.";
       return;
@@ -204,20 +216,18 @@ export default class ContextInspector extends View {
       return;
     }
 
-    const request = {
-      ...target,
-      path: this.manual.get(sessionKey(target)),
-      signature: force ? null : this.data?.signature,
-    };
-    // Two visits to the same session can have different reads in flight.
-    this.pendingRead = request;
+    const visit = { showProgress: force || !this.data };
+    this.pendingRead = visit;
     const isCurrentRead = () =>
       !this.closed &&
-      this.pendingRead === request &&
+      this.pendingRead === visit &&
       this.targetIdentity(this.target()) === identity;
     cx.spawn(async (cx) => {
+      if (this.pendingRead !== visit || this.closed) return;
+      let redraw = visit.showProgress;
       try {
-        const response = await readSession(request);
+        visit.join = joinRead(identity, { ...target, path }, this.data, force);
+        const response = await visit.join.promise;
         if (!isCurrentRead()) return;
 
         const previous = this.data;
@@ -228,20 +238,34 @@ export default class ContextInspector extends View {
           this.afterimage.clear();
           this.clearDetail();
         }
-        this.data = response.unchanged ? { ...previous, ...response } : response;
+        redraw ||= (
+          !response.unchanged || !previous || previous.events !== response.events ||
+          Boolean(this.error) || JSON.stringify(previous.candidates) !== JSON.stringify(response.candidates) ||
+          previous.match !== response.match || previous.reason !== response.reason
+        );
+        this.data = response;
         this.error = null;
+        if (this.visible()) {
+          this.transcriptWatch.observe(
+            response.path, target.provider, (cx) => this.refresh(cx, false, true), cx,
+          );
+        }
 
         if (!response.unchanged && this.replayCutoff === null && sameSession && this.visible()) {
           this.flashUpdatedCounts(cx, previous, this.data);
         }
       } catch (error) {
         if (isCurrentRead()) {
-          this.error = String(error.message || error);
+          const message = String(error.message || error);
+          redraw ||= this.error !== message;
+          this.error = message;
         }
       } finally {
-        if (this.pendingRead === request) {
-          this.pendingRead = null;
-          if (!this.closed) cx.notify();
+        if (this.pendingRead === visit) {
+          const queued = this.refreshQueued && isCurrentRead() ? this.refreshQueued : null;
+          this.releaseRead();
+          if (!this.closed && redraw) cx.notify();
+          if (queued) this.refresh(cx, queued === "manual");
         }
       }
     });
@@ -830,12 +854,15 @@ export default class ContextInspector extends View {
       target = this.target();
     const next = this.targetIdentity(target);
     const visible = this.visible();
-    if (!visible) this.afterimage.clear();
-    if (next !== this.identity && visible) this.refresh(cx);
+    if (!visible) {
+      this.afterimage.clear();
+      this.transcriptWatch.stop();
+    }
     const shownTarget = visible ? (target?.address ?? "") : null;
     // A hidden stack child might not render until it is selected again.
     const opened = props()?.overlay ? null : shared("vectron.context-open");
     const justOpened = opened && opened.at !== this.lastPanelOpen && Date.now() - opened.at < 750;
+    if (visible && (next !== this.identity || justOpened || this.shownTarget === null)) this.refresh(cx);
     if (shownTarget !== null && (shownTarget !== this.shownTarget || justOpened)) {
       this.lastPanelFlashColor = justOpened
         ? opened.color
@@ -894,7 +921,7 @@ export default class ContextInspector extends View {
           )
           .child(div().flex_1())
           .child(
-            this.button("context-refresh", this.pendingRead ? "Reading…" : "Refresh", (cx) =>
+            this.button("context-refresh", this.pendingRead?.showProgress ? "Reading…" : "Refresh", (cx) =>
               this.refresh(cx, true),
             ),
           )
@@ -1013,7 +1040,7 @@ export default class ContextInspector extends View {
                 ),
               )
               .child(div().flex_1())
-              .child(div().text_size(9).text_color(t.dim).child("Local · read-only · 5s")),
+              .child(div().text_size(9).text_color(t.dim).child("Local · read-only")),
           )
           .when(this.about, (e) =>
             e.child(

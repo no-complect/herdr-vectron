@@ -203,6 +203,7 @@ function tasks() {
 }
 
 const contextHost = {
+  watchFolder: noop,
   appHome: () => "/fixture",
   props: () => ({}),
   layout: noop,
@@ -291,6 +292,47 @@ test("Context rejects late reads across agent and session switches and skips hid
   isVisible = false;
   view.refresh(timeline.context);
   assert.equal(requests.length, 7);
+});
+
+test("Context queues manual Refresh behind its own check and drops it when the agent changes", async () => {
+  const requests = [];
+  const { default: Inspector } = await loadMod("vectron-context", "main.js", {
+    herdr: {
+      ...contextHost,
+      exec: (_program, args) => new Promise((resolve) => {
+        requests.push({
+          request: JSON.parse(args[2]),
+          complete: (data) => resolve({ code: 0, stdout: JSON.stringify(data) }),
+        });
+      }),
+    },
+  });
+  const { context, flush } = tasks();
+  const view = new Inspector();
+  let address = "first";
+  view.target = () => ({ address, provider: "codex" });
+  view.visible = () => true;
+  view.init({}, context);
+  view.refresh(context, true);
+  view.refresh(context, false, true);
+  assert.equal(requests.length, 1);
+  requests[0].complete({ path: "/first", signature: "first-version" });
+  await new Promise(setImmediate);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].request.signature, null);
+  requests[1].complete({ path: "/first", signature: "fresh" });
+  await flush();
+  assert.equal(view.data.signature, "fresh");
+
+  view.refresh(context);
+  view.refresh(context, true);
+  address = "second";
+  view.refresh(context);
+  requests[2].complete({ path: "/first", signature: "late" });
+  requests[3].complete({ path: "/second" });
+  await flush();
+  assert.equal(requests.length, 4);
+  assert.equal(view.data.path, "/second");
 });
 
 test("Context keeps the selected transcript and replay when a known session restarts", async () => {

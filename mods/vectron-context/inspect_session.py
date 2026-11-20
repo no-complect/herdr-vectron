@@ -442,6 +442,7 @@ class Accounting:
     def __init__(self):
         self.events = []
         self.next_event_id = 0
+        self.last_event_id = -1
         self.calls = {}
         self.segment = 0
         self.turn = 0
@@ -489,6 +490,7 @@ class Accounting:
             if protected
             else redact(text[:600])[:160],
         )
+        self.last_event_id = self.next_event_id
         self.next_event_id += 1
         if persistent:
             self.persistent[persistent] = event["id"]
@@ -496,7 +498,7 @@ class Accounting:
         self.events.append(event)
 
     def usage_sample(self):
-        return dict(self.reported, afterId=int(self.events[-1]["id"]) if self.events else -1)
+        return dict(self.reported, afterId=self.last_event_id)
 
     def codex_usage(self, payload, timestamp):
         if payload.get("type") == "task_started":
@@ -949,7 +951,103 @@ def earlier_usage(omitted, provider):
     return reported, [dict(reported, afterId=after_id)]
 
 
-def summarize(path, home):
+def consume_records(accounting, ranges, provider, notes, digest=None, appended=False):
+    for source, start, end, base in ranges:
+        for offset, raw in transcript_lines(source, start, end):
+            if digest is not None:
+                digest.update(raw)
+            if len(raw) > MAX_LINE:
+                notes.append("An oversized record was skipped; this view is partial.")
+                continue
+            if not raw.endswith(b"\n"):
+                accounting.malformed += 1
+                break
+            try:
+                row = json.loads(raw)
+                # IDs remain stable when an append moves the start of the read window.
+                accounting.next_event_id = base + offset
+                if provider == "claude":
+                    accounting.claude(row, source, offset)
+                elif provider == "grok":
+                    if source.name == "updates.jsonl":
+                        accounting.grok_usage(row)
+                    else:
+                        accounting.grok(row, source, offset)
+                elif provider == "agy":
+                    accounting.agy(row, source, offset)
+                else:
+                    if appended and row.get("type") == "response_item":
+                        item = row.get("payload", {})
+                        if (item.get("type") in ("function_call_output", "custom_tool_call_output")
+                                and item.get("call_id") not in accounting.calls):
+                            # The call may precede our cursor. Rebuild to classify its output.
+                            return False
+                    accounting.feed(row, source, offset)
+            except (ValueError, TypeError, AttributeError):
+                accounting.malformed += 1
+    return True
+
+
+CHECKPOINT_FIELDS = (
+    "last_event_id", "segment", "turn", "reported", "model", "window",
+    "hidden_reasoning", "media", "opaque_compaction", "truncated_records",
+)
+
+
+def file_revision(info):
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def checkpoint_for(path, info, digest, accounting, recorded_events):
+    cursor = dict(
+        version=1, path=str(path), device=info.st_dev, inode=info.st_ino,
+        offset=info.st_size, digest=digest.hexdigest(), recorded_events=recorded_events,
+        accounting={key: getattr(accounting, key) for key in CHECKPOINT_FIELDS},
+    )
+    # The cursor travels as a command argument. Keep it bounded and omit transcript text.
+    return cursor if len(json.dumps(cursor)) <= 4096 else None
+
+
+def summarize_append(path, cursor):
+    if not isinstance(cursor, dict) or cursor.get("version") != 1 or cursor.get("path") != str(path):
+        return None
+    info = path.stat()
+    offset = cursor.get("offset")
+    recorded = cursor.get("recorded_events")
+    if (not isinstance(offset, int) or not isinstance(recorded, int) or recorded < 0
+            or not 0 < offset < info.st_size <= MAX_BYTES
+            or (cursor.get("device"), cursor.get("inode")) != (info.st_dev, info.st_ino)):
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while stream.tell() < offset:
+            chunk = stream.read(min(1024 * 1024, offset - stream.tell()))
+            if not chunk:
+                return None
+            digest.update(chunk)
+    # Matching the entire prefix catches same-inode rewrites, including rewrites followed by growth.
+    if digest.hexdigest() != cursor.get("digest"):
+        return None
+
+    accounting = Accounting()
+    try:
+        for key in CHECKPOINT_FIELDS:
+            setattr(accounting, key, cursor["accounting"][key])
+    except (KeyError, TypeError):
+        return None
+
+    notes = []
+    ranges = [(path, offset, info.st_size, 0)]
+    if not consume_records(accounting, ranges, "codex", notes, digest, appended=True):
+        return None
+    if notes or accounting.malformed or file_revision(path.stat()) != file_revision(info):
+        return None
+    result = summary_result(accounting, notes, 1, False, recorded)
+    result["checkpoint"] = checkpoint_for(path, info, digest, accounting, result["recorded_events"])
+    return result
+
+
+def summarize(path, home, with_checkpoint=False):
     path = allowed(path, home)
     provider = provider_of(path, home)
     parts, notes = chain(path, home) if provider == "codex" else ([(path, None)], [])
@@ -975,38 +1073,28 @@ def summarize(path, home):
         notes.append(
             "Antigravity result steps are grouped under Tool results. Compaction boundaries are not reconstructed from these transcripts."
         )
+    info = None
+    if with_checkpoint and provider == "codex" and parts == [(path, None)] and not notes:
+        info = path.stat()
     ranges, omitted = transcript_ranges(parts, provider)
     if omitted:
         notes.append("The read limit was reached. This view shows the most recent transcript data.")
-    for source, start, end, base in ranges:
-        for offset, raw in transcript_lines(source, start, end):
-            if len(raw) > MAX_LINE:
-                notes.append("An oversized record was skipped; this view is partial.")
-                continue
-            if not raw.endswith(b"\n"):
-                accounting.malformed += 1
-                break
-            try:
-                row = json.loads(raw)
-                # IDs remain stable when an append moves the start of the read window.
-                accounting.next_event_id = base + offset
-                if provider == "claude":
-                    accounting.claude(row, source, offset)
-                elif provider == "grok":
-                    if source.name == "updates.jsonl":
-                        accounting.grok_usage(row)
-                    else:
-                        accounting.grok(row, source, offset)
-                elif provider == "agy":
-                    accounting.agy(row, source, offset)
-                else:
-                    accounting.feed(row, source, offset)
-            except (ValueError, TypeError, AttributeError):
-                accounting.malformed += 1
+    digest = hashlib.sha256() if info and info.st_size and not omitted else None
+    consume_records(accounting, ranges, provider, notes, digest)
     if provider == "grok" and accounting.reported:
         accounting.samples = [accounting.usage_sample()]
     if omitted and accounting.reported is None:
         accounting.reported, accounting.samples = earlier_usage(omitted, provider)
+    cursor = None
+    if digest is not None and not notes and not accounting.malformed and file_revision(path.stat()) == file_revision(info):
+        cursor = checkpoint_for(path, info, digest, accounting, len(accounting.events))
+    result = summary_result(accounting, notes, len(parts), bool(omitted))
+    if cursor is not None:
+        result["checkpoint"] = cursor
+    return result
+
+
+def summary_result(accounting, notes, files, partial_history, previous_events=0):
     if accounting.truncated_records:
         notes.append(
             "The provider truncated some recorded fields; text estimates and previews are partial."
@@ -1030,6 +1118,7 @@ def summarize(path, home):
         )
     events = accounting.events
     # Preserve the beginning, largest contributors and latest events within a bounded UI payload.
+    recorded_events = previous_events + len(events)
     if len(events) > MAX_EVENTS:
         kept = {
             e["id"]: e
@@ -1038,6 +1127,7 @@ def summarize(path, home):
             + events[:500]
         }
         events = sorted(kept.values(), key=lambda e: int(e["id"]))[-MAX_EVENTS:]
+    if recorded_events > MAX_EVENTS:
         notes.append(
             "Event list is capped at 5,000 entries; category estimates cover the retained entries only."
         )
@@ -1047,14 +1137,14 @@ def summarize(path, home):
 
     return dict(
         events=events,
-        recorded_events=len(accounting.events),
+        recorded_events=recorded_events,
         latest_segment=accounting.segment,
         reported=accounting.reported,
-        partial_history=bool(omitted),
+        partial_history=partial_history,
         model=accounting.model,
         notes=notes,
         usage_samples=accounting.samples[-2000:],
-        files=len(parts),
+        files=files,
         persistent=accounting.persistent,
         all_totals={category: all_totals[category] for category in CATEGORIES},
         method="Text estimate = UTF-8 bytes / 4. Category estimates are not an exact decomposition of reported input tokens.",
@@ -1075,12 +1165,12 @@ def signature(path, home):
             parts.append((summary, None))
     values = []
     for source, fork_boundary in parts:
+        stat = source.stat()
         if fork_boundary is None:
-            stat = source.stat()
-            values.append((str(source), stat.st_mtime_ns, stat.st_size))
+            values.append((str(source), *file_revision(stat)))
         else:
             # A fork sees the parent only through its recorded byte offset.
-            values.append((str(source), fork_boundary, fork_boundary))
+            values.append((str(source), stat.st_dev, stat.st_ino, min(stat.st_size, fork_boundary), fork_boundary))
     return hashlib.sha256(json.dumps(values).encode()).hexdigest()
 
 
@@ -1189,7 +1279,14 @@ def main():
                 if sig == request.get("signature"):
                     result["unchanged"] = True
                 else:
-                    result.update(summarize(path, home))
+                    cursor = request.get("checkpoint")
+                    delta = None
+                    if request.get("signature") and provider_of(path, home) == "codex" and cursor:
+                        delta = summarize_append(path, cursor)
+                    if delta is None:
+                        result.update(summarize(path, home, with_checkpoint=request.get("want_checkpoint")))
+                    else:
+                        result.update(delta, delta_base=request["signature"])
     except (OSError, ValueError, TypeError, KeyError, IndexError):
         result = dict(
             error="The session data is unavailable or has an unsupported shape. Choose another session or refresh."
