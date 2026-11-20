@@ -160,3 +160,9 @@ test("the usage meter gives up only the width needed for window controls", async
   measure();
   assert.deepEqual(actions.pop(), ["layout.resize", { id: "bar-right", px: 90 }]);
 });
+
+test("navigation begins at the top bar's left edge beneath the macOS title bar", async () => {
+  const { frame, state } = await topBar([]);
+  state.window = { platform: "macos", fullscreen: false };
+  assert.equal(frame().calls.pl[0], 8);
+});

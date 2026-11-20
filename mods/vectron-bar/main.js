@@ -91,9 +91,8 @@ export default class VectronBar extends View {
     const cwd = focus?.cwd;
     const here = cwd ? (cwd === home() ? "~" : cwd.split("/").filter(Boolean).pop()) : null;
     const sep = () => div().flex_none().mx(10).text_color(t.border).child("│");
-    // macOS draws its window buttons over this corner; leave them room.
     const w = window();
-    const inset = w?.platform === "macos" && !w.fullscreen ? 76 : 4;
+    const inset = 8;
     const sweep = this.cabinet.sweep(t, inset + 12);
     return row
       .relative()
