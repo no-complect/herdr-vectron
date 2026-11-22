@@ -106,16 +106,6 @@ export default class Egm extends View {
     const preview = this.preview;
     if (preview) {
       return v_flex().flex_1().min_h(0)
-        .child(h_flex().gap(6).p(8).items_center()
-          .child(button(t, "Back", (_e, cx) => {
-            this.clearPreview();
-            cx.notify();
-          }))
-          .child(div().flex_1().min_w(0).truncate().text_size(12).child(preview.document.path))
-          .child(button(t, "Copy path", (_e, cx) => {
-            cx.write_to_clipboard(absolutePath(result.root, preview.document.path));
-            notify({ title: "Document path copied" });
-          })))
         .child(
           formatted
             ? div().flex_1().min_h(0).px(10).pb(8).text_size(12)
@@ -167,7 +157,6 @@ export default class Egm extends View {
         .child(button(t, "Claude / Antigravity", setHost("claude"), this.host === "claude")))
       .child(v_flex().id("egm-skills").flex_1().min_h(0).overflow_y_scrollbar()
         .child(message(t, "Copy a skill invocation into an agent with the EGM plugin installed."))
-        .when(Boolean(document), (el) => el.child(message(t, "Selected document · " + document.path)))
         .children(skills.map(([id, label, description]) => {
           const text = skillInvocation(id, this.host, result?.root, document);
           return h_flex().gap(8).px(10).py(6).items_center()
@@ -185,6 +174,8 @@ export default class Egm extends View {
     const t = theme();
     const location = checking() ? { cwd: null, on: null } : workspace();
     if (this.work?.key !== JSON.stringify(location)) this.refresh(location, cx);
+    const document = this.preview?.document;
+    const root = this.work.result?.root;
     const show = (page) => (_e, cx) => {
       this.page = page;
       cx.notify();
@@ -196,6 +187,17 @@ export default class Egm extends View {
         .child(button(t, "Skills", show("skills"), this.page === "skills"))
         .when(this.preview?.markdown != null, (el) =>
           el.child(button(t, "Preview", show("preview"), this.page === "preview"))))
+      .when(Boolean(document), (el) => el.child(h_flex().gap(6).p(8).items_center()
+        .child(button(t, "Close file", (_e, cx) => {
+          this.clearPreview();
+          this.page = "documents";
+          cx.notify();
+        }))
+        .child(div().flex_1().min_w(0).truncate().text_size(12).tooltip(document.path).child(document.path))
+        .child(button(t, "Copy path", (_e, cx) => {
+          cx.write_to_clipboard(absolutePath(root, document.path));
+          notify({ title: "Document path copied" });
+        }))))
       .child(this.page === "skills" ? this.skillList(t) : this.documents(t, location, this.page === "preview"));
   }
 }
