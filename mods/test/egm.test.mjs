@@ -172,8 +172,20 @@ test("EGM offers Markdown preview for the loaded design and clears it in another
   assert.equal(markdown.nodes[0], editor.args[0].options.value);
   assert.equal(find(panel.render(cx), (node) => node.kind === "editor"), undefined);
 
+  const documentList = (tree) => find(tree, (node) => node.calls.id?.[0] === "egm-documents");
+  click(byLabel(panel.render(cx), "Close file"));
+  assert.ok(documentList(panel.render(cx)));
+  assert.equal(byLabel(panel.render(cx), "Preview"), undefined);
+
+  click(byTooltip(panel.render(cx), "docs/designs/pane.md"));
+  await drain();
   click(byLabel(panel.render(cx), "Skills"));
   click(byTooltip(panel.render(cx), '$egm:egm-review "/work/first/docs/designs/pane.md"'));
+  click(byLabel(panel.render(cx), "Close file"));
+  assert.ok(documentList(panel.render(cx)));
+
+  click(byTooltip(panel.render(cx), "docs/designs/pane.md"));
+  await drain();
   click(byLabel(panel.render(cx), "Preview"));
   cwd = "/work/second";
   const next = panel.render(cx);
