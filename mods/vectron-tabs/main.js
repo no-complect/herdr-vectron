@@ -29,6 +29,7 @@ import { programIcon } from "./program-icon.js";
 import { FocusTrail } from "./focus-trail.js";
 import { splitPane } from "./split-intent.js";
 import { activeArrival, arrivalMarker } from "./arrival.js";
+import { detectEgm } from "./egm.js";
 
 // The last closed tabs (newest last), kept across restarts for ctrl-alt-shift-t.
 const CLOSED = "vectron-tabs.closed";
@@ -81,6 +82,7 @@ export default class Tabs extends View {
     });
     // Poll gently for pure resizes; tab, pane and status changes refresh immediately.
     cx.timer.every(10000, (cx) => this.refresh(cx));
+    cx.timer.every(60000, (cx) => this.checkEgm(cx, find(layout(), "panel-body")));
     // Each step touches cx, so a reloaded strip's old loop ends instead of eating the key.
     cx.spawn(async (cx) => {
       for (;;) {
@@ -98,6 +100,18 @@ export default class Tabs extends View {
 
   close() {
     this.focusTrail.clear();
+  }
+
+  checkEgm(cx, body) {
+    if (this.egmChecking || !find(body, "egm")) return;
+    this.egmChecking = true;
+    cx.spawn(async (cx) => {
+      const installed = await detectEgm(exec);
+      this.egmChecking = false;
+      if (installed === this.egmInstalled) return;
+      this.egmInstalled = installed;
+      cx.notify();
+    });
   }
 
   track(cx) {
@@ -222,6 +236,7 @@ export default class Tabs extends View {
 
   // Keyboard shortcuts and panel buttons use the same toggle behavior.
   togglePanel(id) {
+    if (id === "egm" && !this.egmInstalled) return;
     const root = layout(),
       panel = find(root, "panel"),
       body = find(root, "panel-body");
@@ -238,13 +253,19 @@ export default class Tabs extends View {
   syncPanel(space, panel, body, enabled) {
     if (!space || !panel) return;
     const now = panel.hidden ? null : (body?.active ?? null);
+    if (now === "egm" && !enabled.includes(now)) {
+      run("layout.hide", { id: "panel" });
+      return;
+    }
     if (space.id !== this.space) {
       const first = this.space === undefined;
+      const stored = this.panels[space.id] ?? null;
+      // Let the first check finish before restoring a remembered EGM panel.
+      if (stored === "egm" && this.egmInstalled === undefined && find(body, "egm")) return;
       this.space = space.id;
       this.pending = null;
       if (!(first && !(space.id in this.panels))) {
-        const stored = this.panels[space.id] ?? null,
-          want = enabled.includes(stored) ? stored : null;
+        const want = enabled.includes(stored) ? stored : null;
         if (want !== now) {
           this.pending = { want, until: Date.now() + 1000 };
           if (want) {
@@ -310,6 +331,7 @@ export default class Tabs extends View {
     const root = layout();
     const panel = find(root, "panel"),
       body = find(root, "panel-body");
+    if (this.egmInstalled === undefined) this.checkEgm(cx, body);
     const activeTab = shown.find((tab) => tab.active)?.id;
     this.focusTrail.update(space?.id, activeTab);
     const activePanel = panel?.hidden ? null : body?.active;
@@ -505,9 +527,10 @@ export default class Tabs extends View {
     };
     const enabled =
       panel && body
-        ? [...(shared("workspace.panels") ?? ["files", "changes"]), "context", "graph"]
+        ? [...(shared("workspace.panels") ?? ["files", "changes"]), "context", "egm", "graph"]
             .filter((id) => Boolean(find(body, id)))
             .filter((id) => id !== "changes" || space?.branch != null)
+            .filter((id) => id !== "egm" || this.egmInstalled)
         : [];
     this.syncPanel(space, panel, body, enabled);
     const panelButton = (id, label, icon) => {
@@ -602,6 +625,9 @@ export default class Tabs extends View {
           )
           .when(enabled.includes("context"), (el) =>
             el.child(panelButton("context", "Context", "mods/vectron-context/context.svg")),
+          )
+          .when(enabled.includes("egm"), (el) =>
+            el.child(panelButton("egm", "EGM", "mods/vectron-egm/egm.svg")),
           )
           .when(enabled.includes("graph"), (el) =>
             el.child(panelButton("graph", "Graph", "mods/vectron-tabs/icons/graph.svg")),

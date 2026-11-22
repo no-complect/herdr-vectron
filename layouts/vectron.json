@@ -239,6 +239,13 @@
                           }
                         },
                         {
+                          "id": "egm",
+                          "type": "block",
+                          "content": {
+                            "mod": "vectron-egm"
+                          }
+                        },
+                        {
                           "id": "browser-notes",
                           "type": "block",
                           "content": {
