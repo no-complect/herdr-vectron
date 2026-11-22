@@ -51,6 +51,7 @@
     "super-return": "terminal.open",
     "super-w": "pane.close",
     "super-f": "pane.zoom",
+    "cmd-shift-enter": "vectron-tabs.zoom-egm-or-pane",
     "super-c": "terminal.copy",
     "super-v": "terminal.paste",
     "super-alt-space": "mod.open:vectron-dialog-palette",
@@ -64,6 +65,12 @@
     "cmd-alt-s": "layout.toggle:sidebar",
     "cmd-p": "mod.open:vectron-picker",
     "cmd-shift-p": "mod.open:vectron-command-palette"
+  },
+  "mod:vectron-changes": {
+    "cmd-shift-enter": "vectron-tabs.zoom-panel"
+  },
+  "mod:vectron-tabs": {
+    "cmd-shift-enter": "vectron-tabs.zoom-panel"
   },
   "mod:whistle": {
     "ctrl-space": "whistle.type",

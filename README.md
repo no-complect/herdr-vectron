@@ -12,7 +12,7 @@ Give your agent this instruction in Herdr.
 
 > Read ~/.config/herdr-app/AGENTS.md, then add the layout from https://github.com/no-complect/herdr-vectron using RECIPE.md.
 
-For a manual install, copy the files from [layouts](layouts), the [mod folders](mods) containing a main.js, and [themes/vectron.json](themes/vectron.json) into their matching directories under ~/.config/herdr-app. Keep the existing files when names collide. Merge the two sections in [keys.json](keys.json) into your own keys.json. Then select **Vectron** in Herdr or run this command.
+For a manual install, copy the files from [layouts](layouts), the [mod folders](mods) containing a main.js, and [themes/vectron.json](themes/vectron.json) into their matching directories under ~/.config/herdr-app. Keep the existing files when names collide. Merge the bindings in [keys.json](keys.json) by section. Then select **Vectron** in Herdr or run this command.
 
     herdr-app do layout.switch '{"name":"vectron"}'
 
@@ -36,6 +36,7 @@ In live Context, a growing category flashes over the newly added portion of its 
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
 | **EGM** | Browse the focused worktree’s Elephant & Goldfish documents and copy skill invocations |
+| ⌘⇧Enter | Expand or restore EGM when its tab is selected, or Changes when its tab or panel has focus |
 | Changes → Graph → Select a commit | Trace its ancestry through the loaded history, including both parents of a merge |
 | Changes → Select a file → Click a rail mark | Jump to a diff hunk. Click a cluster more than once to cycle through its hunks. |
 | Context → Categories | Show the full category legend and filter by category |

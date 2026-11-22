@@ -187,6 +187,58 @@ test("tab controls show another inspector and hide the currently selected inspec
   ]);
 });
 
+test("the layout shortcut zooms selected EGM and otherwise falls back to pane zoom", async () => {
+  const calls = [];
+  const main = { id: "main" };
+  const body = { id: "panel-body", active: "egm" };
+  const panel = { id: "panel", size: { px: 417 }, children: [body] };
+  const state = new Map([["layout", "vectron"]]);
+  const { default: Tabs } = await loadMod("vectron-tabs", "main.js", {
+    herdr: {
+      layout: () => ({ children: [main, panel] }),
+      spaces: () => [{ active: true, tabs: [{ id: "t1", active: true }] }],
+      run: (command, args) => calls.push([command, args && { ...args }]),
+      shared: (key) => state.get(key),
+      setShared: (key, value) => state.set(key, value),
+      panes: noop, terminals: noop, focused: noop, props: noop, openOverlay: noop,
+      theme: noop, exec: noop, readTextFile: noop, home: noop, appHome: noop,
+      nextCommand: noop, notify: noop,
+    },
+  });
+  const tabs = new Tabs();
+  tabs.egmInstalled = true;
+  const expanded = [
+    ["layout.resize", { id: "panel", weight: 1 }],
+    ["layout.hide", { id: "main" }],
+  ];
+  const restored = [
+    ["layout.resize", { id: "panel", px: 417 }],
+    ["layout.show", { id: "main" }],
+  ];
+
+  tabs.togglePanelZoom(true);
+  tabs.syncPanelZoom("egm", "t1");
+  assert.deepEqual(calls.splice(0), expanded);
+  tabs.togglePanelZoom(true);
+  assert.deepEqual(calls.splice(0), restored);
+
+  tabs.togglePanelZoom(true);
+  tabs.syncPanelZoom("egm", "t2");
+  assert.deepEqual(calls.splice(0), [...expanded, ...restored]);
+
+  body.active = "changes";
+  tabs.togglePanelZoom(true);
+  assert.deepEqual(calls.splice(0), [["pane.zoom", undefined]]);
+  tabs.togglePanelZoom();
+  tabs.syncPanelZoom("egm", "t1");
+  assert.deepEqual(calls.splice(0), [...expanded, ...restored]);
+
+  body.active = "egm";
+  tabs.egmInstalled = false;
+  tabs.togglePanelZoom(true);
+  assert.deepEqual(calls, [["pane.zoom", undefined]]);
+});
+
 function tasks() {
   const pending = [];
   const context = {

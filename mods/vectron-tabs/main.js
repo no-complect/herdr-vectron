@@ -37,6 +37,7 @@ const CLOSED = "vectron-tabs.closed";
 // Keyboard navigation (keynav.js): while a driver such as whistle selects the strip, it glows
 // and h/l move a cursor over the tabs; enter goes to the one under it, x closes it.
 const MOD = "vectron-tabs";
+const panelZoom = "vectron.panel-zoom";
 // How this mod shows its keynav field: the field glows, its cursor item gets an outline.
 const glow = (t) => t.foreground + "b3";
 const frame = (t) =>
@@ -66,6 +67,7 @@ export default class Tabs extends View {
   init(_props, cx) {
     this.hovered = false;
     if (_props?.pane) return;
+    this.changesTabFocus = cx.focus_handle();
     this.flash = new Flash();
     this.panelFlash = new Flash();
     this.pressed = null;
@@ -90,6 +92,8 @@ export default class Tabs extends View {
         if (c === "reopen") this.reopen(cx);
         else if (c === "toggle-files") this.togglePanel("files");
         else if (c === "toggle-changes") this.togglePanel("changes");
+        else if (c === "zoom-panel" || c === "zoom-egm-or-pane")
+          this.togglePanelZoom(c === "zoom-egm-or-pane");
         else if (c === "toggle-context") this.togglePanel("context");
         else if (c === "split-right" || c === "split-down") splitPane(c.slice(6));
         else this.keynav(move(c));
@@ -241,11 +245,55 @@ export default class Tabs extends View {
       panel = find(root, "panel"),
       body = find(root, "panel-body");
     if (!panel || !body || !find(body, id)) return;
-    if (!panel.hidden && body.active === id) run("layout.hide", { id: "panel" });
+    const closing = !panel.hidden && body.active === id;
+    if (closing) run("layout.hide", { id: "panel" });
     else {
       run("layout.select", { stack: "panel-body", child: id });
       run("layout.show", { id: "panel" });
     }
+    if (id === "changes" && !closing) {
+      this.changesTabFocus.focus();
+    } else if (this.changesTabFocus?.is_focused()) {
+      const pane = focused()?.pane;
+      if (pane) run("pane.focus", { pane });
+    }
+  }
+
+  togglePanelZoom(egmOnly = false) {
+    const root = layout();
+    const panel = find(root, "panel"), body = find(root, "panel-body");
+    const active = panel && !panel.hidden ? body?.active : null;
+    const canZoom = (active === "egm" && this.egmInstalled) || (!egmOnly && active === "changes");
+    if (shared("layout") !== "vectron" || !canZoom) {
+      run("pane.zoom");
+      return;
+    }
+
+    const zoom = shared(panelZoom);
+    if (zoom) {
+      this.restorePanelZoom(zoom);
+      return;
+    }
+    const main = find(root, "main");
+    const tab = spaces().find((space) => space.active)?.tabs.find((tab) => tab.active)?.id;
+    if (!main || main.hidden || !tab) return;
+
+    // Keep the existing panel mounted so its selection and scroll survive the resize.
+    setShared(panelZoom, { size: panel.size ?? { weight: 1 }, tab, panel: active });
+    run("layout.resize", { id: "panel", weight: 1 });
+    run("layout.hide", { id: "main" });
+  }
+
+  restorePanelZoom({ size }) {
+    setShared(panelZoom, null);
+    run("layout.resize", { id: "panel", ...size });
+    run("layout.show", { id: "main" });
+  }
+
+  syncPanelZoom(panel, tab) {
+    const zoom = shared(panelZoom);
+    if (zoom && shared("layout") === "vectron" && (panel !== zoom.panel || tab !== zoom.tab))
+      this.restorePanelZoom(zoom);
   }
 
   // The side panel is remembered per space: switching shows that space's choice
@@ -335,6 +383,7 @@ export default class Tabs extends View {
     const activeTab = shown.find((tab) => tab.active)?.id;
     this.focusTrail.update(space?.id, activeTab);
     const activePanel = panel?.hidden ? null : body?.active;
+    this.syncPanelZoom(activePanel === "egm" && !this.egmInstalled ? null : activePanel, activeTab);
     const focus = focused();
     const arrival = activeArrival(focus);
     const selection = {
@@ -550,6 +599,7 @@ export default class Tabs extends View {
         .text_size(12)
         .bg(on ? t.selected : idle)
         .text_color(on ? t.accent : t.muted)
+        .when(id === "changes", (el) => el.track_focus(this.changesTabFocus))
         .when(on, (el) => el.child(div().absolute().left(0).right(0).bottom(0).h(2).bg(t.accent)))
         .child(this.panelFlash.layer("panel-" + id))
         .hover((s) => s.bg(on ? t.selected : hov))
