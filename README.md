@@ -56,7 +56,7 @@ Moving between panes or tabs leaves a short, fading trace on the two most recent
 
 ## Elephant & Goldfish
 
-The **EGM** tab appears beside **Context** when your local Codex, Claude Code, or Antigravity CLI reports an enabled EGM plugin. Vectron checks when the layout opens and once a minute. **Documents** lists designs under `docs/designs/` and finds briefs, Lite checklists, and review or drift reports among tracked and unignored files in your focused Git worktree. Select a document to read it or copy its path. Use **Refresh** after an agent writes a new artifact.
+The **EGM** tab appears beside **Context** when your local Codex, Claude Code, or Antigravity CLI reports an enabled EGM plugin. Vectron checks when the layout opens and once a minute. **Documents** lists designs under `docs/designs/` and finds briefs, Lite checklists, and review or drift reports among tracked and unignored files in your focused Git worktree. Select a document to read its source or copy its path. For Markdown documents, choose **Preview** to see the formatted version. Use **Refresh** after an agent writes a new artifact.
 
 In **Skills**, choose Codex or Claude Code/Antigravity, then copy the invocation into your agent. Draft can pick up the selected brief, Review and Review loop can target the selected design, and Drift report can target its directory. Install the corresponding agent plugin from [Google’s Elephant-Goldfish Model project](https://github.com/google/elephant-goldfish-model) first.
 

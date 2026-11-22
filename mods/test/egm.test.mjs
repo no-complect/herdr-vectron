@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { discoverDocuments, skillInvocation } from "../vectron-egm/documents.js";
-import { find, loadMod } from "./support/herdr.mjs";
+import { Element, find, loadMod } from "./support/herdr.mjs";
 
 const exec = promisify(execFile);
 
@@ -125,7 +125,7 @@ test("EGM copies the chosen host's invocation with an applicable absolute docume
   assert.equal(skillInvocation("lite", "codex", root, design), "$egm:egm-lite");
 });
 
-test("EGM reads a design and clears its skill target in another worktree", async () => {
+test("EGM offers Markdown preview for the loaded design and clears it in another worktree", async () => {
   const tasks = [];
   const copies = [];
   const cx = {
@@ -136,6 +136,7 @@ test("EGM reads a design and clears its skill target in another worktree", async
   const drain = () => Promise.all(tasks.splice(0));
   let cwd = "/work/first";
   const { default: Egm } = await loadMod("vectron-egm", "main.js", {
+    "gpui-base": { TextView: { markdown: (_id, text) => new Element("markdown").child(text) } },
     herdr: {
     checking: () => false,
     exec: async (_cmd, [action], options) => ({
@@ -158,15 +159,27 @@ test("EGM reads a design and clears its skill target in another worktree", async
   const click = (node) => node.calls.on_click[0](null, cx);
   panel.render(cx);
   await drain();
+  assert.equal(byLabel(panel.render(cx), "Preview"), undefined);
   click(byTooltip(panel.render(cx), "docs/designs/pane.md"));
+  assert.equal(byLabel(panel.render(cx), "Preview"), undefined);
   await drain();
   const editor = find(panel.render(cx), (node) => node.kind === "editor");
   assert.equal(editor.args[0].options.readonly, true);
   assert.equal(editor.args[0].options.value, "# Contents of /work/first/docs/designs/pane.md");
 
+  click(byLabel(panel.render(cx), "Preview"));
+  const markdown = find(panel.render(cx), (node) => node.kind === "markdown");
+  assert.equal(markdown.nodes[0], editor.args[0].options.value);
+  assert.equal(find(panel.render(cx), (node) => node.kind === "editor"), undefined);
+
   click(byLabel(panel.render(cx), "Skills"));
   click(byTooltip(panel.render(cx), '$egm:egm-review "/work/first/docs/designs/pane.md"'));
+  click(byLabel(panel.render(cx), "Preview"));
   cwd = "/work/second";
+  const next = panel.render(cx);
+  assert.equal(byLabel(next, "Preview"), undefined);
+  assert.equal(find(next, (node) => node.kind === "markdown"), undefined);
+  click(byLabel(next, "Skills"));
   click(byTooltip(panel.render(cx), "$egm:egm-review"));
   await drain();
   assert.deepEqual(copies, ['$egm:egm-review "/work/first/docs/designs/pane.md"', "$egm:egm-review"]);

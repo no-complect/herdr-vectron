@@ -1,5 +1,5 @@
 import { View, div } from "gpui-kit";
-import { Editor, EditorState, h_flex, v_flex } from "gpui-base";
+import { Editor, EditorState, TextView, h_flex, v_flex } from "gpui-base";
 import { checking, exec, focused, notify, panes, readTextFile, spaces, theme } from "herdr";
 import { absolutePath, discoverDocuments, skillInvocation } from "./documents.js";
 
@@ -51,6 +51,7 @@ export default class Egm extends View {
   clearPreview() {
     this.preview?.editor?.release();
     this.preview = null;
+    if (this.page === "preview") this.page = "documents";
   }
 
   refresh(location, cx) {
@@ -74,7 +75,7 @@ export default class Egm extends View {
 
   openDocument(document, cx) {
     const work = this.work;
-    const preview = { document, editor: null, message: null };
+    const preview = { document, editor: null, markdown: null, message: null };
     this.preview = preview;
     const path = absolutePath(work.result.root, document.path);
     cx.spawn(async (cx) => {
@@ -84,11 +85,13 @@ export default class Egm extends View {
         if (text === null || text.includes("\0")) {
           preview.message = "This document is unavailable as text.";
         } else {
+          const value = text.length > previewLimit ? text.slice(0, previewLimit) + "\n… (preview truncated)" : text;
           preview.editor = EditorState.new({
             readonly: true,
-            value: text.length > previewLimit ? text.slice(0, previewLimit) + "\n… (preview truncated)" : text,
+            value,
             font_size: 12,
           });
+          if (/\.(md|markdown)$/i.test(document.path)) preview.markdown = value;
         }
       } catch {
         preview.message = "Couldn’t read this document.";
@@ -98,7 +101,7 @@ export default class Egm extends View {
     });
   }
 
-  documents(t, location) {
+  documents(t, location, formatted) {
     const { result, message: status } = this.work;
     const preview = this.preview;
     if (preview) {
@@ -113,9 +116,15 @@ export default class Egm extends View {
             cx.write_to_clipboard(absolutePath(result.root, preview.document.path));
             notify({ title: "Document path copied" });
           })))
-        .child(preview.editor
-          ? Editor.new(preview.editor).flex_1().min_h(0)
-          : message(t, preview.message ?? "Loading document…"));
+        .child(
+          formatted
+            ? div().flex_1().min_h(0).px(10).pb(8).text_size(12)
+                .child(TextView.markdown(`egm-markdown:${preview.document.path}`, preview.markdown)
+                  .scrollable(true).selectable(true).size_full())
+            : preview.editor
+              ? Editor.new(preview.editor).flex_1().min_h(0)
+              : message(t, preview.message ?? "Loading document…"),
+        );
     }
 
     const rows = (result?.documents ?? []).map((document) =>
@@ -184,7 +193,9 @@ export default class Egm extends View {
       .child(div().px(10).pt(9).text_size(13).font_semibold().child("Elephant & Goldfish"))
       .child(h_flex().gap(6).p(8).bg(t.chrome)
         .child(button(t, "Documents", show("documents"), this.page === "documents"))
-        .child(button(t, "Skills", show("skills"), this.page === "skills")))
-      .child(this.page === "documents" ? this.documents(t, location) : this.skillList(t));
+        .child(button(t, "Skills", show("skills"), this.page === "skills"))
+        .when(this.preview?.markdown != null, (el) =>
+          el.child(button(t, "Preview", show("preview"), this.page === "preview"))))
+      .child(this.page === "skills" ? this.skillList(t) : this.documents(t, location, this.page === "preview"));
   }
 }
