@@ -35,8 +35,7 @@ In live Context, a growing category flashes over the newly added portion of its 
 | Top-right usage meter | See quota usage. The meter flashes when a live value changes. Click for reset details. |
 | Agents header → branch icon or ⌘⇧P → Agent map | See parent agents and workers in the current space. Click a node to peek at its terminal. |
 | Files, Changes, Context | Select the right-hand panel from the tab bar |
-| **EGM** | Browse the focused worktree’s Elephant & Goldfish documents and copy skill invocations |
-| ⌘⇧Enter | Expand or restore EGM when its tab is selected, or Changes when its tab or panel has focus |
+| ⌘⇧Enter | Expand or restore Changes when its tab or panel has focus |
 | Changes → Graph → Select a commit | Trace its ancestry through the loaded history, including both parents of a merge |
 | Changes → Select a file → Click a rail mark | Jump to a diff hunk. Click a cluster more than once to cycle through its hunks. |
 | Context → Categories | Show the full category legend and filter by category |
@@ -54,14 +53,6 @@ In the Agent map, a pulse travels toward a worker when it first needs input. Its
 Edge Alerts in the top bar pulse when a background agent needs input or finishes. The markers show how many agents are waiting or finished. Click a marker to open the most recently changed agent in that group. The same diamond or check briefly appears next to the destination space name and on the tab and pane header.
 
 Moving between panes or tabs leaves a short, fading trace on the two most recently departed headers within that tab or space. The first time the top bar appears in an app session, the Vectron logo draws itself and sends a short streak across the bar’s left section.
-
-## Elephant & Goldfish
-
-The **EGM** tab appears beside **Context** when your local Codex, Claude Code, or Antigravity CLI reports an enabled EGM plugin. Vectron checks when the layout opens and once a minute. **Documents** lists designs under `docs/designs/` and finds briefs, Lite checklists, and review or drift reports among tracked and unignored files in your focused Git worktree. Select a document to read its source or copy its path. For Markdown documents, choose **Preview** to see the formatted version. Use **Refresh** after an agent writes a new artifact.
-
-In **Skills**, choose Codex or Claude Code/Antigravity, then copy the invocation into your agent. Draft can pick up the selected brief, Review and Review loop can target the selected design, and Drift report can target its directory. Install the corresponding agent plugin from [Google’s Elephant-Goldfish Model project](https://github.com/google/elephant-goldfish-model) first.
-
-To use the same panel in another Herdr layout, copy [the EGM mod folder](mods/vectron-egm) and add a block with `"content": { "mod": "vectron-egm" }` to your layout’s panel stack. The panel uses the active Herdr theme.
 
 ## Development
 
