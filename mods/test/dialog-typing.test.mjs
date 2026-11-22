@@ -218,7 +218,7 @@ test("both palettes, the Spaces menu, and the tab plus button use Vectron's dial
   assert.equal(dialogs[0].props.id, space.id);
 
   const strip = new tabs.default();
-  const cx = { spawn: noop, timer: { every: noop } };
+  const cx = { spawn: noop, timer: { every: noop }, focus_handle: () => ({ focus: noop }) };
   strip.init({}, cx);
   byId(strip.render(cx), "tab-new").calls.on_click[0]();
   assert.equal(dialogs[1].mod, "vectron-dialogs");

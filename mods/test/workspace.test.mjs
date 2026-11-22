@@ -44,8 +44,9 @@ test("the shipped layout resolves its blocks, pane header, icons, theme, and sho
 
   assert.equal(keys["alt-enter"], "vectron-tabs.split-right");
   assert.equal(keys["alt-shift-enter"], "vectron-tabs.split-down");
+  assert.equal(keys["cmd-shift-enter"], "vectron-tabs.zoom-egm-or-pane");
 
-  for (const name of ["bar", "spaces", "agents", "tabs", "pane", "files", "changes", "context"]) {
+  for (const name of ["bar", "spaces", "agents", "tabs", "pane", "files", "changes", "context", "egm"]) {
     assert.ok(modNames.has(`vectron-${name}`), name);
   }
   for (const action of Object.values(keys)) {
@@ -56,6 +57,7 @@ test("the shipped layout resolves its blocks, pane header, icons, theme, and sho
 
   const context = [...objects(layout)].find((node) => node.id === "panel-body");
   assert.equal(context.active, "context");
+  assert.equal(context.children.find((node) => node.id === "egm")?.content.mod, "vectron-egm");
   assert.equal(layout.theme.light, "vectron");
   assert.equal(layout.theme.dark, "vectron");
   await access(new URL(layout.preview, root));

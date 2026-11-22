@@ -14,6 +14,7 @@ function timeline() {
   const timers = [];
   const cx = {
     notify: noop, spawn: noop,
+    focus_handle: () => ({ focus: noop }),
     timer: { after: (_ms, callback) => timers.push(callback), every: noop },
   };
   return { cx, timers };

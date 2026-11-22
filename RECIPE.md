@@ -9,7 +9,7 @@ Vectron brings the glow and playful timing of classic stand-up vector arcades to
 - The 30 px top bar holds the Vectron mark, sidebar toggle, space numbers, picker, current space and folder, and an AI usage area. Native window buttons occupy the platform’s usual position.
 - The left column stacks the header, Spaces, Agents, and Settings, Keybindings, and Mods buttons. Collapsing it keeps an icon rail.
 - The middle column has a 36 px tab strip above the terminal. Each terminal has a 30 px header, a square 2 px frame and 12 px text padding. The Whistle bar sits beneath the terminal area.
-- The right-hand stack is 349 px wide initially and can show Files, Changes, Context, or Browser Notes. Context shows the selected agent’s latest recorded input or context estimate, an estimated captured-text breakdown, and a filterable event list.
+- The right-hand stack is 349 px wide initially and can show Files, Changes, Context, EGM, or Browser Notes. Context shows the selected agent’s latest recorded input or context estimate, an estimated captured-text breakdown, and a filterable event list. EGM previews the focused Git worktree’s design artifacts and copies skill invocations for the installed Elephant & Goldfish plugin.
 
 ## How it behaves
 
